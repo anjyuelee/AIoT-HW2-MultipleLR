@@ -3,7 +3,7 @@ const $ = id => document.getElementById(id);
 const charts = {};
 const state = {
   header: null, rows: null, result: null, sel: null, model: null, inputs: {}, showAllResiduals: false,
-  hidden: new Set(), excludedColumns: [], groupColumn: null,
+  hidden: new Set(), excludedColumns: [], groupColumn: null, analysisRunId: 0, analysisBusy: false,
 };
 const darkQuery = matchMedia('(prefers-color-scheme: dark)');
 // 圖表顏色依這裡的順序對應 --series-1..5，不隨顯示的方法數改變；point / glyph 是比較圖的點形狀與圖例符號
@@ -61,6 +61,9 @@ load();
 
 // preferTarget：切換題目時指定的 target，優先於目前的選擇
 async function load(preferTarget) {
+  state.analysisRunId++;
+  state.analysisBusy = false;
+  $('results').classList.remove('is-loading');
   const url = $('data-url').value.trim();
   syncPreset();
   setBusy(true);
@@ -117,7 +120,8 @@ function fillTargets(header, rows, preferTarget, excludedColumns = []) {
 }
 
 // 五種方法一次算完：切換方法或比較全部時不必重算
-function analyze() {
+async function analyze() {
+  const runId = ++state.analysisRunId;
   if (!state.rows) return;
   const ratio = readInt('test-ratio', 5, 50, Math.round(CONFIG.testRatio * 100)) / 100;
   const seed = readInt('seed', 0, 4294967295, CONFIG.seed);
@@ -127,6 +131,11 @@ function analyze() {
     const split = data.groups
       ? trainTestSplitGroups(data.groups, ratio, seed)
       : trainTestSplit(data.y.length, ratio, seed);
+    setStatus('loading', '在訓練集內執行 5-fold 交叉驗證…');
+    state.analysisBusy = true;
+    $('results').classList.add('is-loading');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    if (runId !== state.analysisRunId) return;
     const pick = (a, idx) => idx.map(i => a[i]);
     const Xtr = pick(data.X, split.train), ytr = pick(data.y, split.train);
     const Xte = pick(data.X, split.test), yte = pick(data.y, split.test);
@@ -136,16 +145,62 @@ function analyze() {
     const runs = {};
     for (const m of methods) {
       const steps = evaluateSubsets(SELECTORS[m](Xtr, ytr, cols), Xtr, ytr, Xte, yte);
-      runs[m] = { steps, best: steps.reduce((b, s) => (s.rmse < b.rmse ? s : b)) };
+      runs[m] = { steps };
     }
+    const cvGroups = data.groups ? pick(data.groups, split.train) : null;
+    const complete = await attachCrossValidatedMetrics(runs, methods, Xtr, ytr, cvGroups, seed, () => runId === state.analysisRunId);
+    if (!complete || runId !== state.analysisRunId) return;
     state.result = { data, target, split, Xtr, ytr, Xte, yte, cols, methods, runs };
     state.inputs = {};
     syncMethodOptions();
+    state.analysisBusy = false;
+    $('results').classList.remove('is-loading');
     setStatus();
     render();
   } catch (err) {
-    showError(err.message);
+    if (runId === state.analysisRunId) {
+      state.analysisBusy = false;
+      $('results').classList.remove('is-loading');
+      showError(err.message);
+    }
   }
+}
+
+// Rerun feature selection and OLS inside every training fold. Test-set scores
+// are attached separately and are never used to choose k or a method.
+async function attachCrossValidatedMetrics(runs, methods, X, y, groups, seed, isCurrent = () => true) {
+  const foldCount = 5;
+  const folds = makeFolds(y.length, foldCount, seed, groups);
+  for (const method of methods) {
+    const steps = runs[method].steps;
+    const sums = new Array(steps.length).fill(0);
+    const counts = new Array(steps.length).fill(0);
+    for (const fold of folds) {
+      const XfoldTrain = fold.train.map(i => X[i]), yfoldTrain = fold.train.map(i => y[i]);
+      const XfoldValidation = fold.validation.map(i => X[i]), yfoldValidation = fold.validation.map(i => y[i]);
+      const foldCols = independentFeatures(XfoldTrain, yfoldTrain, X[0].length);
+      if (!foldCols.length) continue;
+      const subsets = SELECTORS[method](XfoldTrain, yfoldTrain, foldCols);
+      for (const subset of subsets) {
+        const kIndex = subset.length - 1;
+        if (kIndex < 0 || kIndex >= sums.length) continue;
+        const fit = lstsq(design(XfoldTrain, subset), yfoldTrain);
+        if (!fit) continue;
+        const validationPredictions = predict(XfoldValidation, subset, fit.coef);
+        sums[kIndex] += rmse(yfoldValidation, validationPredictions);
+        counts[kIndex]++;
+      }
+      await new Promise(resolve => setTimeout(resolve, 0));
+      if (!isCurrent()) return false;
+    }
+    for (let i = 0; i < steps.length; i++) {
+      steps[i].cvRmse = counts[i] === foldCount ? sums[i] / foldCount : null;
+    }
+    const eligible = steps.filter(step => Number.isFinite(step.cvRmse));
+    if (!eligible.length) throw new Error(`${methodName(method)} 無法在所有 5 個 fold 中完成交叉驗證。`);
+    runs[method].best = eligible.reduce((best, step) => step.cvRmse < best.cvRmse ? step : best);
+  }
+  return true;
 }
 
 // 特徵太多時 Exhaustive 停用；原本選它就改回 Forward SFS
@@ -181,12 +236,12 @@ const stepOf = (method, k) => state.result.runs[method].steps.find(s => s.k === 
 // 不同方法選到同一組特徵時，RMSE 只差在浮點誤差，視為相同
 const sameRmse = (a, b) => Math.abs(a - b) <= 1e-9 * Math.abs(b);
 
-// 目前模式的最佳模型：單一方法取該方法 test RMSE 最低的 k；比較全部時取所有方法中最低者（相同時取排前面的方法）
+// 目前模式的最佳模型：以平均 5-fold CV RMSE 選 k 與方法；測試集只留作最終評估。
 function modeBest() {
   let best = null;
   for (const m of modeMethods()) {
     const b = state.result.runs[m].best;
-    if (!best || (b.rmse < best.rmse && !sameRmse(b.rmse, best.rmse))) best = { method: m, k: b.k, rmse: b.rmse };
+    if (!best || (b.cvRmse < best.cvRmse && !sameRmse(b.cvRmse, best.cvRmse))) best = { method: m, k: b.k, cvRmse: b.cvRmse };
   }
   return best;
 }
@@ -194,7 +249,7 @@ function modeBest() {
 function select(method, k) {
   showModel(method, k);
   markSelected();
-  Object.values(charts).forEach(c => c.draw());
+  [charts.rmse, charts.r2].forEach(c => c?.draw());
 }
 
 // 切換選取的模型：算出它的統計量與測試集預測，更新右側的模型細節
@@ -225,7 +280,7 @@ function setBusy(busy) {
   $('load-btn').disabled = busy;
   $('preset').disabled = busy;
   $('load-btn').textContent = busy ? '載入中…' : '載入資料';
-  $('results').classList.toggle('is-loading', busy);
+  $('results').classList.toggle('is-loading', busy || state.analysisBusy);
   if (busy && $('results').hidden) setStatus('loading', '正在載入資料…');
 }
 
@@ -300,7 +355,7 @@ function renderModel() {
   const label = `${methodName(s.method)}，k = ${s.k}`;
 
   $('model-title').textContent = isBest ? `最佳模型：${label}` : `${label} 的模型`;
-  $('hero-sub').textContent = `用 ${s.k} / ${data.names.length} 個特徵，Test RMSE ${fmtNum(s.rmse)}`;
+  $('hero-sub').textContent = `CV RMSE ${fmtMaybe(s.cvRmse)} · 最終 Test RMSE ${fmtNum(s.rmse)} · 使用 ${s.k} / ${data.names.length} 個特徵`;
   $('back-to-best').hidden = isBest;
   $('back-to-best').textContent = `回到最佳：${methodName(best.method)}，k = ${best.k}`;
 
@@ -339,7 +394,7 @@ function renderModel() {
 function renderTable() {
   const compare = isCompare();
   $('table-title').textContent = compare ? '各方法比較' : '每個 k 選到的特徵';
-  if (compare) $('table-hint').textContent = '每格左為 Test RMSE、右為 Test R²；粗體為該方法的最佳 k';
+  if (compare) $('table-hint').textContent = '每格依序為 CV RMSE、Test RMSE、Test R²；最佳標記依 CV RMSE 選擇';
   else {
     $('table-hint').replaceChildren(
       el('span', 'key', el('i', 'in'), '已選入'),
@@ -367,7 +422,7 @@ function renderStepsTable() {
   const method = choice('method');
   const { steps, best } = runs[method];
   const order = [...new Set(steps.flatMap(s => s.features))];
-  setHead(['k'], ['Test RMSE', 'num'], ['較上一步', 'num'], ['Test R²', 'num'], ...order.map(f => {
+  setHead(['k'], ['CV RMSE', 'num'], ['Test RMSE', 'num'], ['CV RMSE 差', 'num'], ['Test R²', 'num'], ...order.map(f => {
     const name = el('span', '', data.names[f]);
     name.title = data.names[f];
     return [name, 'fh'];
@@ -383,9 +438,11 @@ function renderStepsTable() {
       return td;
     });
     const delta = el('td', 'num', '—');
-    if (i) setDelta(delta, s.rmse - steps[i - 1].rmse, v => fmtNum(Math.abs(v)));
+    if (i && Number.isFinite(s.cvRmse) && Number.isFinite(steps[i - 1].cvRmse)) {
+      setDelta(delta, s.cvRmse - steps[i - 1].cvRmse, v => fmtNum(Math.abs(v)));
+    }
 
-    const tr = el('tr', '', k, el('td', 'num', fmtNum(s.rmse)), delta, el('td', 'num', s.r2.toFixed(4)), ...marks, el('td', 'fill'));
+    const tr = el('tr', '', k, el('td', 'num', fmtMaybe(s.cvRmse)), el('td', 'num', fmtNum(s.rmse)), delta, el('td', 'num', s.r2.toFixed(4)), ...marks, el('td', 'fill'));
     tr.tabIndex = 0;
     tr.dataset.k = s.k;
     tr.addEventListener('click', () => select(method, s.k));
@@ -403,7 +460,7 @@ function renderStepsTable() {
   }));
 }
 
-// 比較表：列為 k、欄為方法；每個方法 RMSE 最低的格子加粗，全部方法中最低者標「最佳」
+// 比較表：主要數字為 CV RMSE；測試指標只供選模後參考。
 function renderCompareTable() {
   const { runs, methods } = state.result;
   const best = modeBest();
@@ -414,11 +471,13 @@ function renderCompareTable() {
     const cells = methods.map(m => {
       const s = stepOf(m, k);
       if (!s) return el('td', 'num', '—');
-      const btn = el('button', 'cell-btn', el('b', '', fmtNum(s.rmse)), el('span', '', s.r2.toFixed(4)));
-      const isBest = sameRmse(s.rmse, best.rmse);
+      const btn = el('button', 'cell-btn',
+        el('b', '', fmtMaybe(s.cvRmse)),
+        el('span', '', `Test ${fmtNum(s.rmse)} · R² ${s.r2.toFixed(4)}`));
+      const isBest = Number.isFinite(s.cvRmse) && sameRmse(s.cvRmse, best.cvRmse);
       if (isBest) btn.append(el('span', 'best-tag', '最佳'));
       btn.type = 'button';
-      btn.setAttribute('aria-label', `${methodName(m)}，k = ${k}：Test RMSE ${fmtNum(s.rmse)}，R² ${s.r2.toFixed(4)}${isBest ? '，最佳' : ''}`);
+      btn.setAttribute('aria-label', `${methodName(m)}，k = ${k}：CV RMSE ${fmtMaybe(s.cvRmse)}，Test RMSE ${fmtNum(s.rmse)}，R² ${s.r2.toFixed(4)}${isBest ? '，CV 最佳' : ''}`);
       btn.addEventListener('click', () => select(m, k));
       const td = el('td', s === runs[m].best ? 'num cell method-best' : 'num cell', btn);
       td.dataset.method = m;
@@ -456,7 +515,8 @@ function markSelected() {
 
 // 滑過表格列時，在兩張圖上同步顯示該 k 的 tooltip（比較模式會列出每個方法）
 function peek(k) {
-  for (const c of Object.values(charts)) {
+  for (const c of [charts.rmse, charts.r2]) {
+    if (!c) continue;
     const active = k == null ? [] : c.data.datasets
       .map((ds, d) => ({ datasetIndex: d, index: k - 1 }))
       .filter(a => c.isDatasetVisible(a.datasetIndex) && c.data.datasets[a.datasetIndex].data[a.index] != null);
@@ -841,7 +901,9 @@ function renderLegend(series) {
       if (box.checked) state.hidden.delete(m);
       else state.hidden.add(m);
       for (const c of Object.values(charts)) {
-        c.setDatasetVisibility(d, box.checked);
+        c.data.datasets.forEach((dataset, index) => {
+          if (dataset.methodKey === m) c.setDatasetVisibility(index, box.checked);
+        });
         c.update();
       }
     });
@@ -862,37 +924,61 @@ function drawCharts() {
   const labels = Array.from({ length: maxK }, (_, i) => i + 1);
   const best = modeBest();
   const bestSeries = series.indexOf(best.method), bestIdx = best.k - 1;
-  const ties = series.filter(m => sameRmse(runs[m].best.rmse, best.rmse)).length;
-  const bestText = !compare ? `最佳 k = ${best.k}`
-    : ties > 1 ? `最佳 k = ${best.k}（${ties} 個方法相同）`
-    : `最佳：${methodName(best.method)} k = ${best.k}`;
+  const ties = series.filter(m => sameRmse(runs[m].best.cvRmse, best.cvRmse)).length;
+  const bestText = !compare ? `CV 最佳 k = ${best.k}`
+    : ties > 1 ? `CV 最佳 k = ${best.k}（${ties} 個方法相同）`
+    : `CV 最佳：${methodName(best.method)} k = ${best.k}`;
   renderLegend(series);
 
   for (const [key, { label, fmt, below }] of Object.entries(METRICS)) {
     charts[key]?.destroy();
-    // 單一方法：珊瑚色線、最佳點為實心大圓點；比較模式：各方法用系列色 + 不同點形狀
-    const datasets = series.map((m, d) => {
+    // Test curves remain visible as reference; CV curves determine the best k and method.
+    const testDatasets = series.map((m, d) => {
       const c = color(compare ? seriesVar(m) : '--accent');
-      const isBest = i => d === bestSeries && i === bestIdx;
       const shape = compare ? METHODS.find(x => x.key === m).point : 'circle';
       return {
-        label: compare ? methodName(m) : label,
+        methodKey: m,
+        metric: key,
+        label: compare ? `${methodName(m)} · Test ${label}（參考）` : `Test ${label}（僅供參考）`,
         data: labels.map(k => stepOf(m, k)?.[key] ?? null),
         hidden: compare && state.hidden.has(m),
         borderColor: c,
         backgroundColor: c,
         borderWidth: 2,
         cubicInterpolationMode: 'monotone',
-        // 最佳點一律畫實心圓（✕、+ 形狀沒有填色，畫不出外框效果）
-        pointStyle: labels.map((_, i) => (isBest(i) ? 'circle' : shape)),
-        pointRadius: labels.map((_, i) => (isBest(i) ? 7 : compare ? 3.5 : 4)),
-        pointHoverRadius: 7,
+        pointStyle: shape,
+        pointRadius: compare ? 3.5 : 4,
+        pointHoverRadius: 6,
         pointHitRadius: 12,
-        pointBackgroundColor: labels.map((_, i) => (isBest(i) ? color('--solid') : c)),
-        pointBorderColor: labels.map((_, i) => (isBest(i) ? color('--inner') : c)),
-        pointBorderWidth: labels.map((_, i) => (isBest(i) ? 3 : 1.5)),
+        pointBackgroundColor: c,
+        pointBorderColor: c,
+        pointBorderWidth: 1.5,
       };
     });
+    const cvDatasets = key === 'rmse' ? series.map(m => {
+      const c = color(compare ? seriesVar(m) : '--accent');
+      return {
+        methodKey: m,
+        metric: 'cvRmse',
+        label: compare ? `${methodName(m)} · 5-fold CV RMSE` : '5-fold CV RMSE（用於選模）',
+        data: labels.map(k => stepOf(m, k)?.cvRmse ?? null),
+        hidden: compare && state.hidden.has(m),
+        borderColor: c,
+        backgroundColor: c,
+        borderWidth: 2.5,
+        borderDash: [7, 4],
+        cubicInterpolationMode: 'monotone',
+        pointStyle: 'circle',
+        pointRadius: labels.map((_, i) => (m === best.method && i === bestIdx ? 7 : compare ? 3 : 3.5)),
+        pointHoverRadius: 7,
+        pointHitRadius: 12,
+        pointBackgroundColor: labels.map((_, i) => (m === best.method && i === bestIdx ? color('--solid') : c)),
+        pointBorderColor: labels.map((_, i) => (m === best.method && i === bestIdx ? color('--inner') : c)),
+        pointBorderWidth: labels.map((_, i) => (m === best.method && i === bestIdx ? 3 : 1.5)),
+      };
+    }) : [];
+    const datasets = [...testDatasets, ...cvDatasets];
+    const markerSeries = key === 'rmse' ? series.length + bestSeries : bestSeries;
     charts[key] = new Chart($(`${key}-chart`), {
       type: 'line',
       data: { labels, datasets },
@@ -905,7 +991,7 @@ function drawCharts() {
         onClick(evt, _, chart) {
           const mode = compare ? 'nearest' : 'index';
           const [hit] = chart.getElementsAtEventForMode(evt, mode, { intersect: false }, false);
-          if (hit) select(series[hit.datasetIndex], hit.index + 1);
+          if (hit) select(chart.data.datasets[hit.datasetIndex].methodKey, hit.index + 1);
         },
         plugins: {
           legend: { display: false },
@@ -924,10 +1010,10 @@ function drawCharts() {
             footerFont: { weight: 'normal' },
             callbacks: {
               title: items => `k = ${items[0].label}`,
-              label: item => (compare ? `${fmt(item.parsed.y)}  ${item.dataset.label}` : `${label}  ${fmt(item.parsed.y)}`),
+              label: item => `${fmt(item.parsed.y)}  ${item.dataset.label}`,
               labelColor: item => ({ borderColor: item.dataset.borderColor, backgroundColor: item.dataset.borderColor, borderWidth: 2 }),
               labelPointStyle: () => ({ pointStyle: 'line', rotation: 0 }),
-              footer: items => (compare ? '' : stepOf(series[0], items[0].dataIndex + 1).features.map(i => data.names[i]).join(', ')),
+              footer: items => (compare ? '' : stepOf(items[0].dataset.methodKey, items[0].dataIndex + 1).features.map(i => data.names[i]).join(', ')),
             },
           },
         },
@@ -946,7 +1032,7 @@ function drawCharts() {
           },
         },
       },
-      plugins: [markers(bestSeries, bestIdx, bestText, below, {
+      plugins: [markers(markerSeries, bestIdx, bestText, below, {
         band: color('--accent-wash'),
         crosshair: color('--line-2'),
         pill: color('--solid'),
@@ -1100,6 +1186,10 @@ function fmtNum(v) {
 }
 
 function fmtStat(v) {
+  return Number.isFinite(v) ? fmtNum(v) : '—';
+}
+
+function fmtMaybe(v) {
   return Number.isFinite(v) ? fmtNum(v) : '—';
 }
 

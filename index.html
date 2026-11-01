@@ -139,11 +139,12 @@
       <section class="card a-chart" aria-label="Test RMSE 與 Test R² 隨特徵數 k 的變化">
         <div id="legend" class="chips" role="group" aria-label="顯示的方法" hidden></div>
         <div class="inner chart-inner">
-          <div class="chart-head"><h2>Test RMSE vs k</h2><span class="label">越低越好</span></div>
+          <div class="chart-head"><h2>RMSE vs k</h2><span class="label">CV RMSE 用於選模；Test RMSE 僅供參考，不用於選模</span></div>
+          <div class="rmse-legend" aria-label="RMSE 圖例"><span><i class="test-line"></i>Test RMSE（參考）</span><span><i class="cv-line"></i>5-fold CV RMSE（選模）</span></div>
           <div class="chart-box"><canvas id="rmse-chart" role="img" aria-label="Test RMSE 隨特徵數 k 變化的折線圖，數值見特徵表格"></canvas></div>
         </div>
         <div class="inner chart-inner">
-          <div class="chart-head"><h2>Test R² vs k</h2><span class="label">越高越好</span></div>
+          <div class="chart-head"><h2>Test R² vs k</h2><span class="label">測試集最終評估；標記依 CV 選出的 k</span></div>
           <div class="chart-box"><canvas id="r2-chart" role="img" aria-label="Test R² 隨特徵數 k 變化的折線圖，數值見特徵表格"></canvas></div>
         </div>
       </section>
@@ -197,7 +198,7 @@
             </table>
           </div>
         </div>
-        <p class="label">點圖上的點或表格任一列即可查看該模型；◆ 為 test RMSE 最低的最佳模型。</p>
+          <p class="label">點圖上的點或表格任一列即可查看該模型；◆ 為 5-fold CV RMSE 最低的模型。</p>
       </section>
 
       <section class="card a-predict" aria-labelledby="predict-title">
@@ -293,8 +294,8 @@
         <ol class="steps-list">
           <li><b>讀取資料</b>略過含缺值的列；整欄都是數字的視為數值特徵，其餘視為類別。</li>
           <li><b>One-hot</b>類別依字母排序，丟掉第一個作為基準類別（drop first），避免與截距共線。</li>
-          <li><b>切分</b>以固定 seed（mulberry32 + Fisher–Yates 洗牌）打亂後，依比例切出測試集，筆數無條件進位。</li>
-          <li><b>特徵選擇（只用訓練集）</b>先剔除與前面欄位線性相依的特徵，再以下列方法產生 k = 1…p 的特徵子集：
+          <li><b>切分</b>隨機資料以固定 seed（mulberry32 + Fisher–Yates 洗牌）依比例切出測試集；設定 groupColumn 時改依群組切分。</li>
+          <li><b>交叉驗證特徵選擇</b>只在訓練集做 5-fold CV；每個 fold 都重跑特徵選擇與 OLS，以平均 CV RMSE 選方法與 k，再用完整訓練集重擬合：
             <ul>
               <li><b>Forward SFS：</b>從只有截距開始，每一步加入讓訓練集 RSS 最小的特徵。</li>
               <li><b>RFE（Backward）：</b>從全部特徵開始，每次刪掉標準化係數絕對值最小的特徵。</li>
@@ -303,20 +304,20 @@
               <li><b>Exhaustive：</b>每個 k 列舉所有組合，取訓練集 RSS 最小者（特徵超過 15 個時停用）。</li>
             </ul>
           </li>
-          <li><b>評估</b>每個子集以 OLS（含截距）在訓練集擬合，在測試集計算 RMSE、R²、MAE；test RMSE 最低者為最佳模型。</li>
+          <li><b>評估</b>模型選定後才在測試集計算 RMSE、R²、MAE；測試集只作最終評估，不參與選模。</li>
           <li><b>統計推論</b>參數估計、Adjusted R² 與 F 檢定都是訓練集 OLS 的結果（同 statsmodels）；VIF = 1 / (1 − R²ⱼ)，R²ⱼ 為該特徵對其餘特徵回歸的 R²。</li>
         </ol>
-        <p class="label">註：最佳模型是依測試集挑出的，嚴謹的做法是另留驗證集或使用交叉驗證。</p>
+        <p class="label">RMSE vs k 圖中的測試集曲線僅供參考，不用於選模；虛線 CV RMSE 曲線用於選擇 k 與方法。</p>
       </section>
 
       <section class="card n-crisp" aria-labelledby="crisp-title">
         <div class="card-head"><h2 id="crisp-title">CRISP-DM 流程</h2></div>
         <ol class="timeline">
-          <li><b>商業理解</b><span>確立要預測的目標（target）與成功標準：測試集 RMSE 越低越好。</span></li>
+          <li><b>商業理解</b><span>確立要預測的目標（target）與事前訂定的業務成功標準。</span></li>
           <li><b>資料理解</b><span>讀取 CSV，檢視筆數、欄位型別與缺值（見「欄位與型別」）。</span></li>
-          <li><b>資料準備</b><span>略過缺值列、類別欄 one-hot（drop first），以固定 seed 切分訓練集與測試集。</span></li>
-          <li><b>建模</b><span>以五種方法挑出 k = 1…p 的特徵子集，各自在訓練集以 OLS 擬合。</span></li>
-          <li><b>評估</b><span>比較測試集 RMSE、R²、MAE，並檢查係數顯著性、VIF 與測試集殘差。</span></li>
+          <li><b>資料準備</b><span>略過缺值列、類別欄 one-hot（drop first），以固定 seed 隨機或依群組切分訓練集與測試集。</span></li>
+          <li><b>建模</b><span>在訓練集內做 5-fold CV；每個 fold 重跑特徵選擇與 OLS，以平均 CV RMSE 選方法與 k，再用完整訓練集重擬合。</span></li>
+          <li><b>評估</b><span>只在模型選定後比較測試集 RMSE、R²、MAE，並檢查係數顯著性、VIF 與殘差。</span></li>
           <li><b>部署</b><span>以純前端靜態網頁發布（可部署到 GitHub Pages），用即時預測器套用模型。</span></li>
         </ol>
       </section>

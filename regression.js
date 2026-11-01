@@ -124,6 +124,37 @@ function trainTestSplitGroups(groups, testRatio, seed) {
   };
 }
 
+// Reproducible K-fold assignment. Group labels are shuffled and assigned whole
+// to folds; otherwise rows are shuffled and distributed round-robin.
+function makeFolds(n, nFolds = 5, seed = 42, groups = null) {
+  if (nFolds < 2 || nFolds > n) throw new Error('交叉驗證 fold 數必須介於 2 與有效資料筆數之間。');
+  const rand = mulberry32(seed);
+  const shuffle = values => {
+    const out = [...values];
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+  };
+  const validation = Array.from({ length: nFolds }, () => []);
+  if (groups) {
+    if (groups.length !== n || groups.some(g => g == null || g === '')) throw new Error('分組交叉驗證的群組欄必須與有效資料列對齊且不可缺值。');
+    const shuffledGroups = shuffle([...new Set(groups)]);
+    const foldByGroup = new Map(shuffledGroups.map((group, i) => [group, i % nFolds]));
+    groups.forEach((group, i) => validation[foldByGroup.get(group)].push(i));
+  } else {
+    shuffle([...Array(n).keys()]).forEach((row, i) => validation[i % nFolds].push(row));
+  }
+  return validation.map(test => {
+    const held = new Set(test);
+    return {
+      train: [...Array(n).keys()].filter(i => !held.has(i)),
+      validation: test,
+    };
+  });
+}
+
 // Householder QR 解最小平方 min‖Ab − y‖；欄位線性相依時回傳 null
 // 回傳 coef、R（左上 n×n 為 QR 的上三角 R）與殘差平方和 rss
 function lstsq(A, y) {
