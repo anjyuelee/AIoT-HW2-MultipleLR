@@ -1,119 +1,133 @@
-# AIoT-DIC2-MultipleLR
+# AIoT-HW2-MultipleLR
 
-多元線性回歸特徵選擇 Dashboard：比較五種特徵選擇方法在不同特徵數 k 下的測試集表現，並給出最佳模型的係數推論、殘差分析與即時預測。
+**課程：** AIoT 與數據分析（AIoT-DA）
 
-- **課程名稱**：AIoT 與數據分析（AIoT & Data Analytics, AIoT-DA）
-- **上課作業**：DIC2-多元線性回歸 50-startup and boston housing
-- **儲存庫網址**：https://github.com/anjyuelee/AIoT-DIC2-MultipleLR
-- **線上網址**：https://anjyuelee.github.io/AIoT-DIC2-MultipleLR/
+**作業：** HW2：Multiple Linear Regression
 
-![Boston Housing 以 Forward SFS 選出 k = 11 的最佳模型：設定列、指標卡與 Test RMSE、Test R² 圖表](screenshots/overview.png)
+**GitHub 儲存庫：** [anjyuelee/AIoT-HW2-MultipleLR](https://github.com/anjyuelee/AIoT-HW2-MultipleLR)
 
-## 作業內容
+**線上網頁：** [https://anjyuelee.github.io/AIoT-HW2-MultipleLR/](https://anjyuelee.github.io/AIoT-HW2-MultipleLR/)
 
-用 50 Startups 與 Boston Housing 兩份資料做多元線性回歸。每種特徵選擇方法都會為 k = 1..p 各挑出一組特徵，以 OLS 擬合後比較測試集的 RMSE、R² 與 MAE，找出最佳的特徵組合。所有計算都在瀏覽器完成，沒有後端。
+本專題以兩個 Kaggle 資料集完成多元線性回歸分析，依 CRISP-DM 記錄流程，並以純前端互動網頁呈現模型比較、預測區間與診斷結果。
+
+## 作業要求對照表
+
+| 作業要求 | 實現位置 |
+|---|---|
+| 選 Kaggle 資料集，候選特徵 14–39 個並標示來源 | 兩題皆符合：外送時間 14 個候選欄位、平均壽命 18 個；資料來源與連結見「資料集」及網頁頁尾。 |
+| 使用多元線性回歸 | `regression.js` 以 OLS 擬合；網頁提供係數、回歸式與統計摘要。 |
+| 特徵選擇 | Forward SFS、RFE、Lasso、ElasticNet；Exhaustive 在展開後特徵超過 15 個時停用。 |
+| 模型評估 | 網頁模型表與圖呈現 CV RMSE、測試 RMSE、R²、MAE；只以訓練集 CV 選模，測試集只作最後評估。 |
+| 預測圖含信賴區間／預測區間 | 網頁「預測圖（測試集）」顯示實際值、預測值、95% CI 與 PI；即時預測器也顯示區間。 |
+| CRISP-DM 六階段 | [docs/crisp-dm-notes.md](docs/crisp-dm-notes.md)；網頁頁尾另有六階段流程卡片。 |
+| GPT 輔助內容 | README「AI 協助說明」；對話紀錄 PDF 指定存放於 `docs/ai-logs/`。 |
+| NotebookLM 摘要 | README「AI 協助說明」的 NotebookLM 小節，目前標示 TODO。 |
+| GitHub repo 與網頁 | 本儲存庫及 [GitHub Pages 網頁](https://anjyuelee.github.io/AIoT-HW2-MultipleLR/)。 |
+| 加分：下拉選單切換兩題 | 網頁題目下拉選單含外送時間與平均壽命兩題。 |
+| 加分：任意 CSV 網址 | 選「自訂 CSV 網址」後可輸入 CSV URL；來源伺服器需允許 CORS。 |
 
 ## 資料集
 
-| 題目 | 筆數 | 原始欄位 | 候選特徵 | 預測目標 | 資料來源 |
-|---|---|---|---|---|---|
-| 50 Startups | 50 | R&D Spend、Administration、Marketing Spend、State | 5（State 轉成 State_Florida、State_New York，以 California 為基準） | `Profit`（利潤） | [Avik-Jain/100-Days-Of-ML-Code](https://raw.githubusercontent.com/Avik-Jain/100-Days-Of-ML-Code/master/datasets/50_Startups.csv) |
-| Boston Housing | 506 | crim、zn、indus、chas、nox、rm、age、dis、rad、tax、ptratio、b、lstat | 13 | `medv`（房價中位數，千美元） | [selva86/datasets](https://raw.githubusercontent.com/selva86/datasets/master/BostonHousing.csv) |
+| 題目 | Kaggle 資料集 | 分析筆數 | 候選特徵數 | 預測目標 | 切分方式 |
+|---|---|---:|---:|---|---|
+| 外送時間預測 | [Global Food Delivery Restaurant Market 2026](https://www.kaggle.com/datasets/luthfimuthathohirin/global-food-delivery-restaurant-market-2026) | 5,255 | 14（one-hot 後 34 欄） | `actual_delivery_time_min`（分鐘） | 隨機 80:20，seed 42 |
+| 平均壽命預測 | [Life Expectancy (WHO)](https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who) | 1,789 | 18 | `Life expectancy`（年） | `Country` 分組 80:20，seed 42；測試 30 國 |
 
-## 分析流程（CRISP-DM）
+壽命資料的 `Country` 僅作分組鍵，不納入特徵。外送資料含模板式敘述與衍生欄位，疑似合成或經生成式加工；平均壽命資料有缺值、可疑量尺及國家年度自相關等限制。詳見 CRISP-DM 工作筆記。
 
-1. **商業理解**：確立預測目標與成功標準，測試集 RMSE 越低越好。
-2. **資料理解**：讀取 CSV，檢視筆數、欄位型別與缺值。
-3. **資料準備**：略過含缺值的列；類別欄依字母排序後 one-hot 並丟掉第一個類別（drop first，同 pandas `get_dummies(drop_first=True)`）；以固定 seed 洗牌後切出測試集，測試筆數無條件進位（同 scikit-learn）。
-4. **建模**：只用訓練集做特徵選擇，產生 k = 1..p 的特徵子集，各自以 OLS（含截距）擬合。
-5. **評估**：比較測試集 RMSE、R²、MAE，並檢查係數顯著性、VIF 與測試集殘差。
-6. **部署**：以純前端靜態網頁發布在 GitHub Pages，用即時預測器套用模型。
+## 結果摘要
 
-## 特徵選擇方法
+CV RMSE 為 5-fold 驗證的平均值；全域模型依 1-SE 法則選出。測試集指標只用於最終評估。
 
-| 方法 | 做法 |
-|---|---|
-| Forward SFS | 從只有截距開始，每一步加入讓訓練集 RSS 最小的特徵 |
-| RFE（Backward） | 從全部特徵開始，每次刪掉標準化係數絕對值最小的特徵 |
-| Lasso | X、y 標準化後沿 L1 正則化路徑（λ 由大到小），依特徵第一次出現非零係數的順序排名，取前 k 個 |
-| ElasticNet | 同 Lasso，改用 `l1_ratio = 0.5` 的正則化路徑 |
-| Exhaustive | 對每個 k 窮舉全部 C(p, k) 種組合，取訓練集 RSS 最小者；候選特徵超過 15 個時停用 |
+| 題目 | 最終模型與特徵 | CV RMSE | 測試指標 | 95% PI 涵蓋率 | 成功標準 |
+|---|---|---:|---|---:|---|
+| 外送時間 | Forward SFS，k = 4：`delivery_fee_usd`、`delivery_distance_km`、`is_peak_hour`、`weather_condition_Heavy Rain / Storm` | 4.5632 分鐘（最低值 4.5351，SE 0.0558） | RMSE 4.7698 分鐘；R² 0.8792；MAE 3.4898 分鐘 | 95.05%；平均 PI 寬 17.87 分鐘 | **達成**：RMSE ≤ 5、PI 93–97%；4 特徵模型相較全特徵 R² = 0.8789 未下降。 |
+| 平均壽命 | Forward SFS，k = 3：`Income composition of resources`、`HIV/AIDS`、`Adult Mortality` | 3.2482 年（最低值 3.2415，SE 0.0971） | RMSE 3.0916 年；R² 0.8468；MAE 2.5022 年 | 95.58%；平均 PI 寬 12.54 年 | **達成**：MAE ≤ 3、PI 90–98%；3 特徵模型的 MAE 比全特徵模型增加 0.0336 年（門檻 0.5 年）。 |
 
-特徵選擇只看訓練集，測試集只用來評估，避免資料洩漏。每個方法的最佳模型是 Test RMSE 最低者，同分時取較小的 k。
+涵蓋率是目前固定測試集上的比例，不代表所有配送距離、國家或未來期間都能達到相同涵蓋。外送題的區間在短程訂單偏寬、長程訂單偏窄；兩題均有部分回歸假設違反，需結合文件中的診斷限制解讀。
 
-## 結果（測試集 20%、seed 42）
+## 頁面截圖
 
-### 50 Startups
+**外送時間預測**
 
-- 訓練 40 筆、測試 10 筆。
-- 五種方法的最佳模型都是 **k = 2**：R&D Spend、Marketing Spend。
-- Test RMSE 9,304.12、R² 0.9464、MAE 7,736.85；訓練集 Adjusted R² 0.9477、F 354.50。
-- 用全部 5 個特徵時 Test RMSE 為 9,668.04，只用 2 個特徵反而更好；再加入 State 或 Administration 都會讓 Test RMSE 變高。
+![外送時間預測頁面頂端](screenshots/food-overview.png)
 
-```
-Profit = 46,173.60 + 0.8145 × R&D Spend + 0.02474 × Marketing Spend
-```
+**平均壽命預測**
 
-### Boston Housing
+![平均壽命預測頁面頂端](screenshots/life-overview.png)
 
-- 訓練 404 筆、測試 102 筆。
-- 五種方法的最佳模型都是 **k = 11**，也就是去掉 indus 與 age。
-- Test RMSE 4.05、R² 0.7462、MAE 3.11；訓練集 Adjusted R² 0.7297、F 99.89。
-- 用全部 13 個特徵時 Test RMSE 為 4.07。
-- 方法之間的差異出現在特徵數少的時候，例如 k = 3 時 RFE 選 rm、dis、lstat（RMSE 4.82），其他方法都選 rm、ptratio、lstat（RMSE 4.33）。
+**測試集預測圖與區間**
 
-```
-medv = 37.00 − 0.1004 × crim + 0.04195 × zn + 2.837 × chas − 20.46 × nox + 3.979 × rm − 1.597 × dis
-       + 0.3013 × rad − 0.01081 × tax − 0.9440 × ptratio + 0.01007 × b − 0.5448 × lstat
-```
+![預測圖及 95% 信賴區間與預測區間](screenshots/prediction-interval.png)
 
-切分用的是自己實作的 mulberry32 + Fisher–Yates 洗牌，和 scikit-learn 的 `random_state` 不同，所以數字不能直接和 Python notebook 的結果對照。
+**回歸假設檢驗**
 
-## 頁面功能
+![回歸假設檢驗卡片](screenshots/assumptions.png)
 
-- **設定列**：題目、預測目標與特徵選擇方法都以膠囊按鈕攤開，點一下就切換；也可以貼上自訂 CSV 網址，調整測試集比例與亂數種子。
-- **指標卡**：Test RMSE、R²、MAE 與全部特徵模型的差距；訓練集 Adjusted R²、殘差自由度、σ̂、F 檢定；R² 環圈圖、特徵使用數與訓練/測試切分。
-- **圖表**：Test RMSE vs k 與 Test R² vs k 左右並排，標出最佳 k，點選圖上的點即可切換模型。
-- **特徵矩陣**：每個 k 選到哪些特徵、和前一個 k 相比新加入哪個特徵。
-- **比較全部方法**：五種方法畫在同一張圖上，以顏色加標記形狀區分，可個別隱藏；表格列出每個方法在每個 k 的 RMSE 與 R²。
-- **參數估計**：係數、標準誤、t、p 值、95% 信賴區間與 VIF（同 statsmodels `OLS`），回歸式可一鍵複製。
-- **即時預測**：數值欄用滑桿、類別欄用膠囊按鈕輸入，立即算出預測值，超出訓練範圍時提示外插。
-- **測試集殘差**：殘差條碼圖與排序表，|殘差| > 2σ̂ 標為高殘差。
-- **淺色/深色主題**：預設跟隨系統，也可手動切換。
+## CRISP-DM 六階段摘要
 
-**比較全部方法**（深色主題）：五種方法的 Test RMSE、Test R² 曲線，下方是各方法比較表與測試集殘差。
+1. **商業理解**：界定兩題的預測問題、使用者、限制與事前設定的業務成功標準。
+2. **資料理解**：檢視資料來源、欄位、缺值、分布、異常、共線性及目標關係。
+3. **資料準備**：排除洩漏欄位、清理及轉換特徵；外送題只保留 app 訂單，壽命題採完整案例並保留 `Country` 分組鍵。
+4. **建模**：在訓練集內執行 5-fold CV，每個 fold 重跑特徵選擇與 OLS；壽命題使用分組 fold。
+5. **評估**：以 1-SE 法則選較精簡模型，在測試集評估 RMSE、R²、MAE、PI 涵蓋率及回歸假設。
+6. **部署**：純前端靜態網頁可部署在 GitHub Pages，提供兩題切換、自訂 CSV、圖表與即時預測器。
 
-![比較全部方法：五種方法的曲線、各方法比較表與測試集殘差](screenshots/compare.png)
+完整決策、欄位處理、模型表格、成功標準逐項評估及假設檢驗見 [docs/crisp-dm-notes.md](docs/crisp-dm-notes.md)。
 
-**參數估計與即時預測**（50 Startups，Forward SFS k = 5）：回歸式、係數推論表，以及數值欄滑桿與 State 膠囊按鈕。
+## 主要方法
 
-![50 Startups 的參數估計與即時預測](screenshots/startups.png)
+- **5-fold CV**：只在外層訓練資料中評估候選方法與 k；每個 fold 內重新做特徵選擇與 OLS。依 `Country` 分組時，同國家不跨 fold。
+- **1-SE 法則**：以最低 CV RMSE + 該點標準誤作門檻，於門檻內選特徵數較少的模型；k 相同時選 CV RMSE 較低者。外層測試集不參與選模。
+- **切分**：外送訂單隨機切分；壽命題依國家分組切分，以檢查對未見國家的泛化，不代表未來年份預測。
+- **95% CI／PI**：利用 OLS QR 分解計算平均反應信賴區間與單筆新樣本預測區間；不直接反轉 `XᵀX`。
+- **五大假設檢驗**：線性（殘差對預測值及二次趨勢檢查）、Durbin–Watson、Breusch–Pagan、Jarque–Bera、VIF。
 
 ## 本機執行
 
-不需要安裝或建置，在專案目錄啟動任一靜態伺服器即可：
+在專案根目錄啟動靜態伺服器：
 
 ```bash
 python3 -m http.server 8765
 ```
 
-開啟 http://127.0.0.1:8765/ 。也可以直接用瀏覽器打開 `index.html`。
+開啟 <http://127.0.0.1:8765/>。重新整理處理資料時可執行：
 
-要換成其他資料，可以在頁面上貼 CSV 網址，或在 `config.js` 的 `presets` 新增一筆 `{ name, dataUrl, target, source }`。CSV 必須來自允許跨來源讀取（CORS）的網址，例如 raw.githubusercontent.com。
+```bash
+python3 data/prepare_food_delivery.py
+python3 data/prepare_life_expectancy.py
+```
+
+原始 CSV 放在 `data/raw/`，已由 `.gitignore` 排除。自訂 CSV 網址需可由瀏覽器存取，並允許跨來源讀取（CORS）。
 
 ## 專案結構
 
-| 檔案 | 內容 |
-|---|---|
-| `config.js` | 預設資料來源、預測目標、測試集比例、亂數種子與題目清單 |
-| `regression.js` | 純計算：CSV 解析、one-hot、切分、QR 最小平方、五種特徵選擇方法、統計推論 |
-| `app.js` | 介面邏輯：載入資料、圖表、表格、選取連動、即時預測 |
-| `index.html`、`style.css` | 頁面結構與樣式 |
-| `screenshots/` | README 用的頁面截圖（1440px 寬） |
-| `.claude/skills/mlr-feature-selection/SKILL.md` | 完整規格與驗證方式 |
+```text
+.
+├── config.js                      # 題目 preset、資料來源與成功標準
+├── index.html                     # 網頁結構與題目選單
+├── app.js                         # 載入、切分、建模結果與互動介面
+├── regression.js                  # CSV、OLS、CV、特徵選擇、區間與診斷
+├── style.css                      # 淺色／深色主題及版面樣式
+├── data/
+│   ├── prepare_food_delivery.py   # 外送資料準備
+│   ├── prepare_life_expectancy.py # 壽命資料準備
+│   ├── food_delivery_2026.csv     # 處理後外送資料
+│   └── life_expectancy.csv        # 處理後壽命資料
+├── docs/
+│   ├── crisp-dm-notes.md          # CRISP-DM 詳細工作筆記
+│   └── ai-logs/                   # GPT 對話紀錄 PDF 存放處
+└── screenshots/                  # README 使用的題目、預測圖與診斷截圖
+```
 
-## 技術
+## AI 協助說明
 
-- HTML、CSS、原生 JavaScript，沒有建置步驟；圖表用 [Chart.js](https://www.chartjs.org/) 4.4.1，字型為 Manrope。
-- 計算結果在相同的訓練/測試切分下，已和 scikit-learn（RFE、`lasso_path`、`enet_path`）與 statsmodels（`OLS`、VIF）比對一致。
-- 版面參考 Dribbble 上 QClay 的 [Finance Management Dashboard](https://dribbble.com/shots/23245345-Finance-Management-Dashboard)；功能參考 [50 Startups Multiple Linear Regression Explorer](https://huanchen1107.github.io/AIoT-DIC2-MultipleLR/)。
+### GPT 輔助內容
+
+ChatGPT 協助資料理解與欄位意義整理、資料洩漏及共線性判斷、特徵準備策略、CRISP-DM 文件撰寫、前端模型流程與區間／診斷功能實作，以及 CV、1-SE 選模和結果摘要。程式與數字以專案資料及 Node／瀏覽器計算核對；資料來源未提供的資訊以限制或假設標示，不把 AI 推論當成來源證據。
+
+本作業匯出的 GPT 對話紀錄 PDF 請放在 [`docs/ai-logs/`](docs/ai-logs/)；目前資料夾保留為提交位置。
+
+### NotebookLM 摘要
+
+TODO：補上 NotebookLM 使用來源、摘要內容與人工核對結果。

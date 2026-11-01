@@ -725,6 +725,16 @@ tr.high td:nth-child(5) { color: var(--accent-ink); font-weight: 600; }
 }
 .timeline li:not(:last-child)::after { content: ""; position: absolute; left: 12.5px; top: 28px; bottom: 2px; width: 1px; background: var(--accent-soft); }
 .timeline b { line-height: 26px; color: var(--text); font-weight: 600; }
+.crisp-goal { margin-bottom: 10px !important; color: var(--text); line-height: 1.55; }
+.criteria-list { display: grid; gap: 8px; margin: 0 0 8px; padding: 0; list-style: none; }
+.criterion { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 6px; align-items: start; line-height: 1.4; }
+.criterion > b { color: var(--muted); }
+.criterion.pass > b { color: #21865b; }
+.criterion.fail > b { color: #c44b3f; }
+.criterion span { display: grid; gap: 2px; }
+.criterion strong { color: var(--text); font-weight: 600; }
+.criterion small { color: var(--muted); font-size: 12px; }
+#criteria-model { margin: 0 0 14px; }
 
 .source-list { display: grid; gap: 10px; }
 .source-list p { display: grid; gap: 2px; overflow-wrap: anywhere; }

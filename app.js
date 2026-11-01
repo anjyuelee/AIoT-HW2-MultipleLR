@@ -410,6 +410,7 @@ function renderModel() {
   } else {
     setDelta($('m-vs-all'), ((s.rmse - full.rmse) / full.rmse) * 100, v => `${Math.abs(v).toFixed(1)}%`);
   }
+  renderCrispCriteria();
 
   const [b0, ...bs] = s.coef;
   const terms = bs.map((b, i) => el('span', 'term',
@@ -418,6 +419,61 @@ function renderModel() {
     el('span', 'eq-target', target), ' = ', el('span', 'term', b0 < 0 ? '−' : '', el('b', '', fmtCoef(Math.abs(b0)))),
     ...terms.flatMap(t => [' ', t]),
   );
+}
+
+function renderCrispCriteria() {
+  if (!state.result || !state.model) return;
+  const matchedPreset = CONFIG.presets.find(item => sameDataUrl(item.dataUrl, $('data-url').value.trim()));
+  const preset = matchedPreset?.target === state.result.target ? matchedPreset : null;
+  const list = $('success-criteria');
+  $('criteria-model').textContent = `目前模型：${methodName(state.model.method)}，k = ${state.model.k}（測試集 ${state.result.yte.length} 筆）`;
+  if (!preset?.successCriteria?.length) {
+    $('crisp-goal').textContent = `目前資料／目標「${state.result.target}」沒有預設業務門檻；流程提供訓練集內交叉驗證選模、測試集評估及預測區間。`;
+    list.replaceChildren(
+      el('li', 'criterion pass', el('b', '', '✓'), '資料已載入並完成模型擬合。'),
+      el('li', 'criterion pass', el('b', '', '✓'), '使用訓練集交叉驗證選模，測試集供最終評估。'),
+      el('li', 'criterion pass', el('b', '', '✓'), '提供 95% CI／PI 與回歸假設檢查；自訂資料沒有預設業務門檻。'),
+    );
+    return;
+  }
+
+  $('crisp-goal').textContent = preset.businessGoal;
+  const { Xtr, ytr, Xte, yte, cols } = state.result;
+  const fullFit = lstsq(design(Xtr, cols), ytr);
+  const fullPred = fullFit ? predict(Xte, cols, fullFit.coef) : [];
+  const fullR2 = fullFit ? r2(yte, fullPred) : NaN;
+  const fullMae = fullFit ? mae(yte, fullPred) : NaN;
+  const selectedMae = mae(yte, state.model.pred);
+  const pi = state.model.intervals;
+  const piCoverage = pi.length ? 100 * pi.reduce((count, row, i) =>
+    count + Number(yte[i] >= row.piLower && yte[i] <= row.piUpper), 0) / pi.length : NaN;
+  const results = {
+    rmse: { value: state.model.rmse, pass: state.model.rmse <= 5, detail: `目前 ${fmtNum(state.model.rmse)} 分鐘` },
+    mae: { value: selectedMae, pass: selectedMae <= 3, detail: `目前 ${fmtNum(selectedMae)} 年` },
+    piCoverage: {
+      value: piCoverage,
+      pass: Number.isFinite(piCoverage) && piCoverage >= preset.successCriteria.find(c => c.metric === 'piCoverage').min && piCoverage <= preset.successCriteria.find(c => c.metric === 'piCoverage').max,
+      detail: `目前 ${fmtNum(piCoverage)}%`,
+    },
+    r2Drop: {
+      value: fullR2 - state.model.r2,
+      pass: Number.isFinite(fullR2) && fullR2 - state.model.r2 <= 0.01,
+      detail: `全特徵 R² ${fullR2.toFixed(4)}；目前 R² ${state.model.r2.toFixed(4)}（${fullR2 >= state.model.r2 ? `下降 ${ (fullR2 - state.model.r2).toFixed(4)}` : `提高 ${(state.model.r2 - fullR2).toFixed(4)}`}）`,
+    },
+    maeIncrease: {
+      value: selectedMae - fullMae,
+      pass: Number.isFinite(fullMae) && selectedMae - fullMae <= 0.5,
+      detail: `全特徵 MAE ${fmtNum(fullMae)} 年；目前 ${fmtNum(selectedMae)} 年（${fullMae <= selectedMae ? `增加 ${(selectedMae - fullMae).toFixed(3)} 年` : `減少 ${(fullMae - selectedMae).toFixed(3)} 年`}）`,
+    },
+  };
+  list.replaceChildren(...preset.successCriteria.map(criterion => {
+    const result = results[criterion.metric];
+    const status = result?.pass ? 'pass' : 'fail';
+    return el('li', `criterion ${status}`,
+      el('b', '', result?.pass ? '✓' : '⚠'),
+      el('span', '', el('strong', '', criterion.label), el('small', '', result?.detail ?? '無法計算')),
+    );
+  }));
 }
 
 function renderTable() {

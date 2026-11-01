@@ -295,7 +295,7 @@
           <li><b>讀取資料</b>略過含缺值的列；整欄都是數字的視為數值特徵，其餘視為類別。</li>
           <li><b>One-hot</b>類別依字母排序，丟掉第一個作為基準類別（drop first），避免與截距共線。</li>
           <li><b>切分</b>隨機資料以固定 seed（mulberry32 + Fisher–Yates 洗牌）依比例切出測試集；設定 groupColumn 時改依群組切分。</li>
-          <li><b>交叉驗證特徵選擇</b>只在訓練集做 5-fold CV；每個 fold 都重跑特徵選擇與 OLS，以平均 CV RMSE 選方法與 k，再用完整訓練集重擬合：
+          <li><b>交叉驗證特徵選擇</b>只在訓練集做 5-fold CV；每個 fold 都重跑特徵選擇與 OLS，以平均 CV RMSE 和 1-SE 法則選方法與 k，再用完整訓練集重擬合：
             <ul>
               <li><b>Forward SFS：</b>從只有截距開始，每一步加入讓訓練集 RSS 最小的特徵。</li>
               <li><b>RFE（Backward）：</b>從全部特徵開始，每次刪掉標準化係數絕對值最小的特徵。</li>
@@ -307,16 +307,19 @@
           <li><b>評估</b>模型選定後才在測試集計算 RMSE、R²、MAE；測試集只作最終評估，不參與選模。</li>
           <li><b>統計推論</b>參數估計、Adjusted R² 與 F 檢定都是訓練集 OLS 的結果（同 statsmodels）；VIF = 1 / (1 − R²ⱼ)，R²ⱼ 為該特徵對其餘特徵回歸的 R²。</li>
         </ol>
-        <p class="label">RMSE vs k 圖中的測試集曲線僅供參考，不用於選模；虛線 CV RMSE 曲線用於選擇 k 與方法。</p>
+        <p class="label">以最低 CV RMSE + 1 SE 為門檻，在符合門檻的模型中選最少特徵數；RMSE vs k 圖中的測試集曲線僅供參考，不用於選模。</p>
       </section>
 
       <section class="card n-crisp" aria-labelledby="crisp-title">
-        <div class="card-head"><h2 id="crisp-title">CRISP-DM 流程</h2></div>
+        <div class="card-head"><h2 id="crisp-title">CRISP-DM：商業目標與成功標準</h2></div>
+        <p id="crisp-goal" class="crisp-goal"></p>
+        <ul id="success-criteria" class="criteria-list" aria-live="polite"></ul>
+        <p id="criteria-model" class="label"></p>
         <ol class="timeline">
           <li><b>商業理解</b><span>確立要預測的目標（target）與事前訂定的業務成功標準。</span></li>
           <li><b>資料理解</b><span>讀取 CSV，檢視筆數、欄位型別與缺值（見「欄位與型別」）。</span></li>
           <li><b>資料準備</b><span>略過缺值列、類別欄 one-hot（drop first），以固定 seed 隨機或依群組切分訓練集與測試集。</span></li>
-          <li><b>建模</b><span>在訓練集內做 5-fold CV；每個 fold 重跑特徵選擇與 OLS，以平均 CV RMSE 選方法與 k，再用完整訓練集重擬合。</span></li>
+          <li><b>建模</b><span>在訓練集內做 5-fold CV；每個 fold 重跑特徵選擇與 OLS，以 1-SE 法則選方法與 k，再用完整訓練集重擬合。</span></li>
           <li><b>評估</b><span>只在模型選定後比較測試集 RMSE、R²、MAE，並檢查係數顯著性、VIF 與殘差。</span></li>
           <li><b>部署</b><span>以純前端靜態網頁發布（可部署到 GitHub Pages），用即時預測器套用模型。</span></li>
         </ol>
@@ -326,7 +329,6 @@
         <div class="card-head"><h2 id="source-title">資料來源</h2></div>
         <div class="inner source-list">
           <p><span class="label">目前資料</span><a id="source-link" target="_blank" rel="noopener"></a><span id="source-credit" class="label"></span></p>
-          <p><span class="label">功能參考</span><a href="https://huanchen1107.github.io/AIoT-DIC2-MultipleLR/" target="_blank" rel="noopener">50 Startups Multiple Linear Regression Explorer</a></p>
         </div>
         <p class="label">所有計算都在瀏覽器內完成。</p>
       </section>
