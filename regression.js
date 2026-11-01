@@ -483,6 +483,93 @@ function tQuantile(q, df) {
   return (lo + hi) / 2;
 }
 
+// Acklam approximation to the standard normal quantile, used to construct Q-Q points.
+function normalQuantile(p) {
+  if (!(p > 0 && p < 1)) return p === 0 ? -Infinity : p === 1 ? Infinity : NaN;
+  const a = [-39.6968302866538, 220.946098424521, -275.928510446969, 138.357751867269, -30.6647980661472, 2.50662827745924];
+  const b = [-54.4760987982241, 161.585836858041, -155.698979859887, 66.8013118877197, -13.2806815528857];
+  const c = [-0.00778489400243029, -0.322396458041136, -2.40075827716184, -2.54973253934373, 4.37466414146497, 2.93816398269878];
+  const d = [0.00778469570904146, 0.32246712907004, 2.445134137143, 3.75440866190742];
+  const low = 0.02425, high = 1 - low;
+  if (p < low) {
+    const q = Math.sqrt(-2 * Math.log(p));
+    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+      ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+  if (p > high) {
+    const q = Math.sqrt(-2 * Math.log(1 - p));
+    return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+      ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+  const q = p - 0.5, r = q * q;
+  return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q /
+    (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+}
+
+// Five OLS assumption diagnostics from training residuals. originalIds maps each
+// training row back to its source CSV index so DW and residual plots use source order.
+function assumptionDiagnostics(X, y, cols, stats, originalIds) {
+  const fitted = predict(X, cols, stats.terms.map(term => term.coef));
+  const residuals = y.map((value, i) => value - fitted[i]);
+  const n = y.length;
+  const sourceIds = originalIds ?? [...Array(n).keys()];
+  const order = [...Array(n).keys()].sort((a, b) => sourceIds[a] - sourceIds[b]);
+  const orderedResiduals = order.map(i => ({ id: sourceIds[i] + 1, fitted: fitted[i], residual: residuals[i] }));
+
+  // Linearity: auxiliary F test for a quadratic trend in residuals vs fitted values.
+  const nullFit = lstsq(fitted.map(value => [1, value]), residuals);
+  const quadFit = lstsq(fitted.map(value => [1, value, value * value]), residuals);
+  const linearityDf = n - 3;
+  const linearityF = nullFit && quadFit && linearityDf > 0 && quadFit.rss > 0
+    ? Math.max(0, (nullFit.rss - quadFit.rss) / (quadFit.rss / linearityDf))
+    : NaN;
+  const linearityP = Number.isFinite(linearityF) ? fPValue(linearityF, 1, linearityDf) : NaN;
+
+  // Durbin-Watson over residuals restored to the original CSV row order.
+  const ordered = order.map(i => residuals[i]);
+  const residualSS = residuals.reduce((sum, value) => sum + value * value, 0);
+  const dwNumerator = ordered.slice(1).reduce((sum, value, i) => sum + (value - ordered[i]) ** 2, 0);
+  const durbinWatson = residualSS > 0 ? dwNumerator / residualSS : NaN;
+
+  // Breusch-Pagan F form: regress squared residuals on the selected design matrix.
+  const bpFit = lstsq(design(X, cols), residuals.map(value => value * value));
+  const squared = residuals.map(value => value * value), squaredMean = mean(squared);
+  const bpTss = squared.reduce((sum, value) => sum + (value - squaredMean) ** 2, 0);
+  const bpDf = n - cols.length - 1;
+  const bpR2 = bpFit && bpTss > 0 ? Math.max(0, 1 - bpFit.rss / bpTss) : 0;
+  const bpF = bpDf > 0 && cols.length > 0 && bpR2 < 1
+    ? (bpR2 / cols.length) / ((1 - bpR2) / bpDf)
+    : NaN;
+  const bpP = Number.isFinite(bpF) ? fPValue(bpF, cols.length, bpDf) : NaN;
+
+  // Jarque-Bera with population central moments; chi-square(df=2) survival = exp(-JB/2).
+  const residualMean = mean(residuals);
+  const centered = residuals.map(value => value - residualMean);
+  const m2 = mean(centered.map(value => value ** 2));
+  const skewness = m2 > 0 ? mean(centered.map(value => value ** 3)) / m2 ** 1.5 : NaN;
+  const kurtosis = m2 > 0 ? mean(centered.map(value => value ** 4)) / m2 ** 2 : NaN;
+  const jarqueBera = Number.isFinite(skewness) && Number.isFinite(kurtosis)
+    ? n / 6 * (skewness ** 2 + (kurtosis - 3) ** 2 / 4)
+    : NaN;
+  const jbP = Number.isFinite(jarqueBera) ? Math.exp(-jarqueBera / 2) : NaN;
+  const sortedStandardized = centered.map(value => value / (stats.sigma || 1)).sort((a, b) => a - b);
+  const qqPoints = sortedStandardized.map((value, i) => ({
+    x: normalQuantile((i + 0.5) / n),
+    y: value,
+  }));
+
+  const vifTerms = stats.terms.slice(1).map((term, i) => ({ vif: term.vif, feature: cols[i] }));
+  const maxVif = vifTerms.reduce((best, item) => !best || item.vif > best.vif ? item : best, null);
+  return {
+    fitted, residuals, orderedResiduals, qqPoints,
+    linearity: { f: linearityF, p: linearityP },
+    durbinWatson,
+    breuschPagan: { f: bpF, p: bpP, df1: cols.length, df2: bpDf },
+    jarqueBera: { statistic: jarqueBera, p: jbP, skewness, kurtosis },
+    maxVif,
+  };
+}
+
 // F 分佈右尾 p-value
 function fPValue(F, d1, d2) {
   return d2 > 0 ? betaInc(d2 / (d2 + d1 * F), d2 / 2, d1 / 2) : NaN;

@@ -355,7 +355,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.25; }
   grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-template-areas:
     "test test" "train train" "donut dots" "split split" "chart chart" "prediction prediction"
-    "matrix matrix" "predict predict" "coef coef" "resid resid";
+    "assumptions assumptions" "matrix matrix" "predict predict" "coef coef" "resid resid";
   gap: 12px;
   padding: 16px;
   transition: opacity 0.2s;
@@ -368,6 +368,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.25; }
 .a-split { grid-area: split; }
 .a-chart { grid-area: chart; }
 .a-prediction { grid-area: prediction; }
+.a-assumptions { grid-area: assumptions; }
 .a-matrix { grid-area: matrix; }
 .a-predict { grid-area: predict; }
 .a-coef { grid-area: coef; }
@@ -394,6 +395,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.25; }
       "donut donut dots dots split split"
       "chart chart chart chart chart chart"
       "prediction prediction prediction prediction prediction prediction"
+      "assumptions assumptions assumptions assumptions assumptions assumptions"
       "matrix matrix matrix matrix matrix matrix"
       "coef coef coef coef coef coef"
       "predict predict predict predict predict predict"
@@ -407,6 +409,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.25; }
       "donut donut dots dots split split"
       "chart chart chart chart chart chart"
       "prediction prediction prediction prediction prediction prediction"
+      "assumptions assumptions assumptions assumptions assumptions assumptions"
       "matrix matrix matrix resid resid resid"
       "coef coef coef coef predict predict";
   }
@@ -419,6 +422,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.25; }
       "test test test train train train donut donut dots dots split split"
       "chart chart chart chart chart chart chart chart chart chart chart chart"
       "prediction prediction prediction prediction prediction prediction prediction prediction prediction prediction prediction prediction"
+      "assumptions assumptions assumptions assumptions assumptions assumptions assumptions assumptions assumptions assumptions assumptions assumptions"
       "matrix matrix matrix matrix matrix resid resid resid resid resid resid resid"
       "coef coef coef coef coef coef coef predict predict predict predict predict";
   }
@@ -527,10 +531,26 @@ h1 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.25; }
 .prediction-chart-box { position: relative; height: 340px; min-height: 260px; }
 .prediction-chart-box canvas { position: absolute; inset: 0; }
 .prediction-interval { margin: 0; color: var(--text-2); font-size: 13px; }
+.assumption-results { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 8px; }
+.assumption-result { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--inner); }
+.assumption-result-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.assumption-badge { flex: none; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.assumption-badge.pass { background: color-mix(in srgb, var(--series-3) 14%, transparent); color: var(--series-3); }
+.assumption-badge.warn { background: var(--accent-wash); color: var(--accent-ink); }
+.assumption-stat { margin: 0; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.assumption-result .label { line-height: 1.4; }
+.assumption-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.assumption-chart { min-width: 0; padding: 12px; border-radius: 14px; background: var(--inner); }
+.assumption-chart .chart-head { margin-bottom: 6px; }
+.assumption-chart .chart-head h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.assumption-chart-box { position: relative; height: 280px; }
+.assumption-chart-box canvas { position: absolute; inset: 0; }
 @media (max-width: 760px) {
   .a-prediction .card-head { flex-direction: column; }
   .prediction-stats { justify-content: flex-start; }
   .prediction-chart-box { height: 280px; }
+  .assumption-charts { grid-template-columns: 1fr; }
+  .assumption-chart-box { height: 250px; }
 }
 @media (min-width: 760px) {
   .a-chart { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }

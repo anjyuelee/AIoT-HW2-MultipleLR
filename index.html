@@ -167,6 +167,23 @@
         <div class="prediction-chart-box"><canvas id="prediction-chart" role="img" aria-label="測試集預測值、實際值及 95% 信賴區間和預測區間"></canvas></div>
       </section>
 
+      <section class="card a-assumptions" aria-labelledby="assumptions-title">
+        <div class="card-head">
+          <div><h2 id="assumptions-title">回歸假設檢驗</h2><p class="label">使用目前模型的訓練集殘差；依原始資料列順序檢查自相關</p></div>
+        </div>
+        <div id="assumption-results" class="assumption-results"></div>
+        <div class="assumption-charts">
+          <div class="assumption-chart">
+            <div class="chart-head"><h3>殘差 vs 預測值</h3><span class="label">虛線 y = 0</span></div>
+            <div class="assumption-chart-box"><canvas id="assumption-resid-chart" role="img" aria-label="訓練集殘差對預測值散佈圖，附 y 等於 0 的參考線"></canvas></div>
+          </div>
+          <div class="assumption-chart">
+            <div class="chart-head"><h3>殘差 Q–Q 圖</h3><span class="label">虛線為常態參考線</span></div>
+            <div class="assumption-chart-box"><canvas id="assumption-qq-chart" role="img" aria-label="訓練集標準化殘差的常態 Q–Q 圖"></canvas></div>
+          </div>
+        </div>
+      </section>
+
       <section class="card a-matrix" aria-labelledby="table-title">
         <div class="card-head">
           <h2 id="table-title"></h2>

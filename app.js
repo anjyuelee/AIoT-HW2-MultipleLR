@@ -199,7 +199,7 @@ function select(method, k) {
 
 // 切換選取的模型：算出它的統計量與測試集預測，更新右側的模型細節
 function showModel(method, k) {
-  const { Xtr, ytr, Xte } = state.result;
+  const { Xtr, ytr, Xte, split, data } = state.result;
   const s = stepOf(method, k);
   state.sel = { method, k };
   const stats = olsSummary(Xtr, ytr, s.features);
@@ -209,12 +209,14 @@ function showModel(method, k) {
     stats,
     pred: predict(Xte, s.features, s.coef),
     intervals: predictionIntervals(Xte, s.features, s.coef, stats),
+    assumptions: assumptionDiagnostics(Xtr, ytr, s.features, stats, split.train.map(i => data.ids[i])),
   };
   renderModel();
   renderCoefs();
   renderPredictor();
   renderResiduals();
   renderPredictionChart();
+  renderAssumptions();
 }
 
 // ---------- 狀態 ----------
@@ -251,6 +253,7 @@ function render() {
   $('hero').hidden = false;
   drawCharts();
   renderPredictionChart();
+  renderAssumptions();
 }
 
 function renderDataInfo() {
@@ -659,6 +662,116 @@ function renderPredictionChart() {
   });
 }
 
+function renderAssumptions() {
+  const { data } = state.result;
+  const diagnostics = state.model.assumptions;
+  const results = [
+    {
+      title: '線性',
+      stat: `二次趨勢 F = ${fmtStat(diagnostics.linearity.f)} · p = ${fmtP(diagnostics.linearity.p)}`,
+      ok: diagnostics.linearity.p >= 0.05,
+      detail: diagnostics.linearity.p >= 0.05
+        ? '未發現明顯的殘差曲線趨勢；仍請搭配左側殘差圖判讀。'
+        : '殘差仍呈現顯著曲線趨勢，線性形式可能不足。',
+    },
+    {
+      title: '誤差獨立',
+      stat: `Durbin–Watson = ${fmtStat(diagnostics.durbinWatson)} · 參考範圍 1.5–2.5`,
+      ok: diagnostics.durbinWatson >= 1.5 && diagnostics.durbinWatson <= 2.5,
+      detail: diagnostics.durbinWatson < 1.5
+        ? '相鄰列殘差有正自相關跡象；DW 約 2 才接近無自相關。'
+        : diagnostics.durbinWatson > 2.5
+          ? '相鄰列殘差有負自相關跡象；DW 約 2 才接近無自相關。'
+          : '未見明顯的一階自相關；DW 是依原始列序計算，需考慮資料排序方式。',
+    },
+    {
+      title: '等變異',
+      stat: `Breusch–Pagan F(${diagnostics.breuschPagan.df1}, ${diagnostics.breuschPagan.df2}) = ${fmtStat(diagnostics.breuschPagan.f)} · p = ${fmtP(diagnostics.breuschPagan.p)}`,
+      ok: diagnostics.breuschPagan.p >= 0.05,
+      detail: diagnostics.breuschPagan.p >= 0.05
+        ? '未發現殘差變異隨特徵改變的明顯證據。'
+        : '殘差變異可能隨特徵改變，標準誤與區間推論需謹慎。',
+    },
+    {
+      title: '常態',
+      stat: `Jarque–Bera = ${fmtStat(diagnostics.jarqueBera.statistic)} · p = ${fmtP(diagnostics.jarqueBera.p)} · 偏態 = ${fmtStat(diagnostics.jarqueBera.skewness)} · 峰度 = ${fmtStat(diagnostics.jarqueBera.kurtosis)}`,
+      ok: diagnostics.jarqueBera.p >= 0.05,
+      detail: diagnostics.jarqueBera.p >= 0.05
+        ? '未拒絕殘差常態分布；也請檢視右側 Q–Q 圖。'
+        : '殘差偏離常態的證據明顯；Q–Q 圖可查看偏離位置與尾部。',
+    },
+    {
+      title: '無多重共線性',
+      stat: `最大 VIF = ${fmtStat(diagnostics.maxVif?.vif)} · ${diagnostics.maxVif ? data.names[diagnostics.maxVif.feature] : '無特徵'} · 門檻 < 5`,
+      ok: diagnostics.maxVif?.vif < 5,
+      detail: diagnostics.maxVif?.vif < 5
+        ? '目前模型中各特徵的 VIF 均低於 5。'
+        : '最大 VIF 達到或超過 5，相關係數估計可能不穩。',
+    },
+  ];
+  $('assumption-results').replaceChildren(...results.map(result => {
+    const badge = el('span', `assumption-badge ${result.ok ? 'pass' : 'warn'}`, result.ok ? '✓ 符合' : '⚠ 違反');
+    const top = el('div', 'assumption-result-top', el('b', '', result.title), badge);
+    return el('article', `assumption-result ${result.ok ? 'pass' : 'warn'}`,
+      top,
+      el('p', 'assumption-stat', result.stat),
+      el('p', 'label', result.detail));
+  }));
+
+  const css = getComputedStyle(document.documentElement);
+  const color = name => css.getPropertyValue(name).trim();
+  const residualPoints = diagnostics.orderedResiduals.map(row => ({ x: row.fitted, y: row.residual, id: row.id }));
+  const xValues = residualPoints.map(point => point.x);
+  const xMin = Math.min(...xValues), xMax = Math.max(...xValues);
+  const yAbs = Math.max(...residualPoints.map(point => Math.abs(point.y))) || 1;
+  charts.assumptionResidual?.destroy();
+  charts.assumptionResidual = new Chart($('assumption-resid-chart'), {
+    type: 'scatter',
+    data: { datasets: [
+      { label: '訓練集殘差', data: residualPoints, backgroundColor: color('--series-2'), borderColor: color('--series-2'), pointRadius: 2.5, pointHoverRadius: 4 },
+      { label: 'y = 0', data: [{ x: xMin, y: 0 }, { x: xMax, y: 0 }], type: 'line', borderColor: color('--accent'), borderWidth: 1.5, borderDash: [6, 4], pointRadius: 0, fill: false },
+    ] },
+    options: assumptionChartOptions(color, {
+      x: { title: { display: true, text: '預測值' } },
+      y: { min: -yAbs * 1.05, max: yAbs * 1.05, title: { display: true, text: '殘差' } },
+    }, point => `原始列 ${point.raw.id}`),
+  });
+
+  const qq = diagnostics.qqPoints;
+  const qqAbs = Math.max(...qq.map(point => Math.max(Math.abs(point.x), Math.abs(point.y)))) || 1;
+  charts.assumptionQQ?.destroy();
+  charts.assumptionQQ = new Chart($('assumption-qq-chart'), {
+    type: 'scatter',
+    data: { datasets: [
+      { label: '殘差分位數', data: qq, backgroundColor: color('--series-2'), borderColor: color('--series-2'), pointRadius: 2.5, pointHoverRadius: 4 },
+      { label: '常態參考線', data: [{ x: -qqAbs, y: -qqAbs }, { x: qqAbs, y: qqAbs }], type: 'line', borderColor: color('--accent'), borderWidth: 1.5, borderDash: [6, 4], pointRadius: 0, fill: false },
+    ] },
+    options: assumptionChartOptions(color, {
+      x: { min: -qqAbs, max: qqAbs, title: { display: true, text: '常態理論分位數' } },
+      y: { min: -qqAbs, max: qqAbs, title: { display: true, text: '標準化殘差分位數' } },
+    }),
+  });
+}
+
+function assumptionChartOptions(color, axisTitles, tooltipTitle = null) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: color('--solid'), titleColor: color('--muted'), bodyColor: color('--on-solid'),
+        callbacks: { title: items => tooltipTitle ? tooltipTitle(items[0]) : '常態 Q–Q 圖' },
+      },
+    },
+    scales: {
+      x: { type: 'linear', grid: { color: color('--line') }, border: { display: false }, ticks: { color: color('--text-2') }, title: { color: color('--text-2'), ...axisTitles.x.title } },
+      y: { type: 'linear', grid: { color: color('--line') }, border: { display: false }, ticks: { color: color('--text-2') }, title: { color: color('--text-2'), ...axisTitles.y.title }, ...(axisTitles.y.min != null ? { min: axisTitles.y.min, max: axisTitles.y.max } : {}) },
+    },
+  };
+}
+
 // 測試集殘差（實際 − 預測）依 |殘差| 排序；|殘差| > 2σ̂（訓練集殘差標準誤）標為高殘差
 function renderResiduals() {
   const { data, split, yte } = state.result;
@@ -916,6 +1029,7 @@ function onThemeChange() {
   if (state.result && !$('results').hidden) {
     drawCharts();
     renderPredictionChart();
+    renderAssumptions();
   }
 }
 
@@ -983,6 +1097,10 @@ function el(tag, className, ...children) {
 
 function fmtNum(v) {
   return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtStat(v) {
+  return Number.isFinite(v) ? fmtNum(v) : '—';
 }
 
 function fmtCoef(v) {
