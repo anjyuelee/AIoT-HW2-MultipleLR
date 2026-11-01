@@ -370,12 +370,43 @@ function olsSummary(X, y, cols) {
   const r2Train = 1 - rss / sst;
   const F = (sst - rss) / k / sigma2;
   return {
-    terms, df,
+    terms, df, tCrit, Rinv,
     sigma: Math.sqrt(sigma2),
     adjR2: 1 - ((1 - r2Train) * (n - 1)) / df,
     F,
     Fp: fPValue(F, k, df),
   };
+}
+
+// 以 OLS 的 R 分解計算觀測點的平均反應 CI 與單筆新樣本 PI。
+// A = QR，因此 (AᵀA)⁻¹ = R⁻¹R⁻ᵀ；不直接形成或反轉 XᵀX。
+function predictionIntervalForRow(x0, coef, stats) {
+  const yhat = dot(x0, coef);
+  if (!(stats.df > 0) || !Number.isFinite(stats.sigma) || !Number.isFinite(stats.tCrit)) {
+    return { yhat, ciLower: NaN, ciUpper: NaN, piLower: NaN, piUpper: NaN };
+  }
+  const Rinv = stats.Rinv;
+  // Compute R⁻ᵀx₀, then its squared norm equals x₀ᵀ(AᵀA)⁻¹x₀.
+  const transformed = x0.map((_, j) => {
+    let value = 0;
+    for (let i = 0; i <= j; i++) value += Rinv[i][j] * x0[i];
+    return value;
+  });
+  const leverage = transformed.reduce((sum, value) => sum + value * value, 0);
+  const ciHalfWidth = stats.tCrit * stats.sigma * Math.sqrt(Math.max(0, leverage));
+  const piHalfWidth = stats.tCrit * stats.sigma * Math.sqrt(1 + Math.max(0, leverage));
+  return {
+    yhat,
+    ciLower: yhat - ciHalfWidth,
+    ciUpper: yhat + ciHalfWidth,
+    piLower: yhat - piHalfWidth,
+    piUpper: yhat + piHalfWidth,
+  };
+}
+
+// Intervals for a batch of full-width X rows and the currently selected subset.
+function predictionIntervals(X, cols, coef, stats) {
+  return X.map(row => predictionIntervalForRow([1, ...cols.map(c => row[c])], coef, stats));
 }
 
 // VIF：把第 j 個特徵對其餘特徵（含截距）做回歸，VIF = 1 / (1 − R²_j)

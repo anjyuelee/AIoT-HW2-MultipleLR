@@ -148,6 +148,25 @@
         </div>
       </section>
 
+      <section class="card a-prediction" aria-labelledby="prediction-chart-title">
+        <div class="card-head">
+          <div><h2 id="prediction-chart-title">預測圖（測試集）</h2><p class="label">依預測值排序；陰影帶為 95% 區間</p></div>
+          <div class="prediction-stats" aria-live="polite">
+            <span>PI 涵蓋率 <b id="pi-coverage"></b></span>
+            <span>平均 PI 寬度 <b id="pi-width"></b></span>
+            <span>平均 CI 寬度 <b id="ci-width"></b></span>
+          </div>
+        </div>
+        <div class="prediction-legend" aria-label="圖例">
+          <span><i class="legend-band pi"></i>95% 預測區間（單筆新樣本）</span>
+          <span><i class="legend-band ci"></i>95% 信賴區間（平均反應）</span>
+          <span><i class="legend-line"></i>預測值</span>
+          <span><i class="legend-dot"></i>實際值（在 PI 內）</span>
+          <span><i class="legend-dot outside"></i>實際值（在 PI 外）</span>
+        </div>
+        <div class="prediction-chart-box"><canvas id="prediction-chart" role="img" aria-label="測試集預測值、實際值及 95% 信賴區間和預測區間"></canvas></div>
+      </section>
+
       <section class="card a-matrix" aria-labelledby="table-title">
         <div class="card-head">
           <h2 id="table-title"></h2>
@@ -172,6 +191,7 @@
         <div class="inner">
           <span id="predict-label" class="label"></span>
           <output id="predict-value" class="value-xl" for="predict-inputs" aria-live="polite"></output>
+          <p id="predict-interval" class="prediction-interval" aria-live="polite"></p>
           <p id="predict-note" class="label"></p>
         </div>
         <div id="predict-inputs" class="predict-inputs"></div>

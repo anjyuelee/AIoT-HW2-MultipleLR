@@ -17,6 +17,9 @@
   --accent-ink: #b8452a;
   --accent-wash: #fce9e3;
   --accent-soft: #f6c9bb;
+  --ci-ink: #2866a6;
+  --ci-wash: rgba(40, 102, 166, 0.30);
+  --outlier: #c62828;
   --series-1: #e0603e;
   --series-2: #1f5fb4;
   --series-3: #2a8a4a;
@@ -43,6 +46,9 @@
     --accent-ink: #f08b6e;
     --accent-wash: rgba(229, 96, 61, 0.16);
     --accent-soft: rgba(229, 96, 61, 0.42);
+    --ci-ink: #78b8ff;
+    --ci-wash: rgba(76, 151, 225, 0.42);
+    --outlier: #ff7168;
     --series-1: #e5603d;
     --series-2: #4a88d6;
     --series-3: #389a59;
@@ -68,6 +74,9 @@
   --accent-ink: #f08b6e;
   --accent-wash: rgba(229, 96, 61, 0.16);
   --accent-soft: rgba(229, 96, 61, 0.42);
+  --ci-ink: #78b8ff;
+  --ci-wash: rgba(76, 151, 225, 0.42);
+  --outlier: #ff7168;
   --series-1: #e5603d;
   --series-2: #4a88d6;
   --series-3: #389a59;
@@ -345,7 +354,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.25; }
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-template-areas:
-    "test test" "train train" "donut dots" "split split" "chart chart"
+    "test test" "train train" "donut dots" "split split" "chart chart" "prediction prediction"
     "matrix matrix" "predict predict" "coef coef" "resid resid";
   gap: 12px;
   padding: 16px;
@@ -358,6 +367,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.25; }
 .a-dots { grid-area: dots; }
 .a-split { grid-area: split; }
 .a-chart { grid-area: chart; }
+.a-prediction { grid-area: prediction; }
 .a-matrix { grid-area: matrix; }
 .a-predict { grid-area: predict; }
 .a-coef { grid-area: coef; }
@@ -383,6 +393,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.25; }
       "test test test train train train"
       "donut donut dots dots split split"
       "chart chart chart chart chart chart"
+      "prediction prediction prediction prediction prediction prediction"
       "matrix matrix matrix matrix matrix matrix"
       "coef coef coef coef coef coef"
       "predict predict predict predict predict predict"
@@ -395,6 +406,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.25; }
       "test test test train train train"
       "donut donut dots dots split split"
       "chart chart chart chart chart chart"
+      "prediction prediction prediction prediction prediction prediction"
       "matrix matrix matrix resid resid resid"
       "coef coef coef coef predict predict";
   }
@@ -406,6 +418,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.25; }
     grid-template-areas:
       "test test test train train train donut donut dots dots split split"
       "chart chart chart chart chart chart chart chart chart chart chart chart"
+      "prediction prediction prediction prediction prediction prediction prediction prediction prediction prediction prediction prediction"
       "matrix matrix matrix matrix matrix resid resid resid resid resid resid resid"
       "coef coef coef coef coef coef coef predict predict predict predict predict";
   }
@@ -498,6 +511,27 @@ h1 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.25; }
 .chart-box { position: relative; flex: 1; min-height: 240px; }
 .chart-box canvas { position: absolute; top: 0; left: 0; cursor: pointer; }
 @media (max-width: 640px) { .chart-box { min-height: 220px; } }
+.a-prediction { gap: 10px; }
+.a-prediction .card-head { align-items: flex-start; }
+.prediction-stats { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px 16px; color: var(--text-2); font-size: 12px; }
+.prediction-stats span { white-space: nowrap; }
+.prediction-stats b { margin-left: 4px; color: var(--text); font-weight: 600; }
+.prediction-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 0 4px; color: var(--text-2); font-size: 11px; }
+.prediction-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend-band { width: 17px; height: 10px; border: 1px solid var(--accent); border-radius: 3px; }
+.legend-band.pi { background: var(--accent-wash); }
+.legend-band.ci { background: var(--ci-wash); border-color: var(--ci-ink); }
+.legend-line { width: 18px; border-top: 2px solid var(--accent); }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--series-2); }
+.legend-dot.outside { background: var(--outlier); border: 2px solid var(--inner); box-shadow: 0 0 0 1px var(--outlier); }
+.prediction-chart-box { position: relative; height: 340px; min-height: 260px; }
+.prediction-chart-box canvas { position: absolute; inset: 0; }
+.prediction-interval { margin: 0; color: var(--text-2); font-size: 13px; }
+@media (max-width: 760px) {
+  .a-prediction .card-head { flex-direction: column; }
+  .prediction-stats { justify-content: flex-start; }
+  .prediction-chart-box { height: 280px; }
+}
 @media (min-width: 760px) {
   .a-chart { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .a-chart #legend { grid-column: 1 / -1; }

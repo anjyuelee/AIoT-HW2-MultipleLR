@@ -202,11 +202,19 @@ function showModel(method, k) {
   const { Xtr, ytr, Xte } = state.result;
   const s = stepOf(method, k);
   state.sel = { method, k };
-  state.model = { ...s, method, stats: olsSummary(Xtr, ytr, s.features), pred: predict(Xte, s.features, s.coef) };
+  const stats = olsSummary(Xtr, ytr, s.features);
+  state.model = {
+    ...s,
+    method,
+    stats,
+    pred: predict(Xte, s.features, s.coef),
+    intervals: predictionIntervals(Xte, s.features, s.coef, stats),
+  };
   renderModel();
   renderCoefs();
   renderPredictor();
   renderResiduals();
+  renderPredictionChart();
 }
 
 // ---------- 狀態 ----------
@@ -242,6 +250,7 @@ function render() {
   $('results').hidden = false;
   $('hero').hidden = false;
   drawCharts();
+  renderPredictionChart();
 }
 
 function renderDataInfo() {
@@ -539,18 +548,115 @@ function onPredictInput(e) {
 
 function updatePrediction() {
   const { data } = state.result;
-  const { method, k, features, coef } = state.model;
-  let y = coef[0];
-  features.forEach((f, i) => {
+  const { method, k, features, coef, stats } = state.model;
+  const x0 = [1];
+  features.forEach(f => {
     const { column: h, level } = data.sources[f];
     const v = state.inputs[h];
-    y += coef[i + 1] * (level == null ? (v === '' ? NaN : Number(v)) : v === level ? 1 : 0);
+    x0.push(level == null ? (v === '' ? NaN : Number(v)) : v === level ? 1 : 0);
   });
+  const interval = predictionIntervalForRow(x0, coef, stats);
   const outside = [...$('predict-inputs').querySelectorAll('input[type="number"]')]
     .some(n => n.value !== '' && (Number(n.value) < Number(n.dataset.lo) || Number(n.value) > Number(n.dataset.hi)));
-  $('predict-value').textContent = dash(y, v => fmtSigned(v, fmtNum));
+  $('predict-value').textContent = dash(interval.yhat, v => fmtSigned(v, fmtNum));
+  $('predict-interval').textContent = Number.isFinite(interval.piLower)
+    ? `95% CI（平均反應）：[${fmtSigned(interval.ciLower, fmtNum)}, ${fmtSigned(interval.ciUpper, fmtNum)}] · 95% PI（單筆新樣本）：[${fmtSigned(interval.piLower, fmtNum)}, ${fmtSigned(interval.piUpper, fmtNum)}]`
+    : '目前輸入無法計算信賴區間與預測區間。';
   $('predict-note').textContent = `以「${methodName(method)}，k = ${k}」的模型計算`
     + (outside ? '；有輸入超出訓練資料範圍，屬於外插，預測較不可靠' : '');
+}
+
+function renderPredictionChart() {
+  const { yte } = state.result;
+  const { pred, intervals } = state.model;
+  const css = getComputedStyle(document.documentElement);
+  const color = name => css.getPropertyValue(name).trim();
+  const ordered = yte.map((actual, i) => ({ actual, predicted: pred[i], interval: intervals[i], i }))
+    .sort((a, b) => a.predicted - b.predicted);
+  const labels = ordered.map((_, i) => String(i + 1));
+  const transparent = 'rgba(0, 0, 0, 0)';
+  const piWash = color('--accent-wash');
+  const ciWash = color('--ci-wash');
+  const ciInk = color('--ci-ink');
+  const upper = (label, key, border = transparent) => ({
+    label, data: ordered.map(row => row.interval[key]),
+    borderColor: border, backgroundColor: transparent, pointRadius: 0,
+    borderWidth: border === transparent ? 0 : 1.5, fill: false, tension: 0,
+  });
+  const lower = (label, key, target, wash, border = transparent) => ({
+    label, data: ordered.map(row => row.interval[key]),
+    borderColor: border, backgroundColor: transparent, pointRadius: 0,
+    borderWidth: border === transparent ? 0 : 1.5, fill: { target, above: wash, below: wash }, tension: 0,
+  });
+  const chartData = [
+    upper('PI upper', 'piUpper'),
+    lower('95% PI', 'piLower', 0, piWash),
+    upper('CI upper', 'ciUpper', ciInk),
+    lower('95% CI', 'ciLower', 2, ciWash, ciInk),
+    {
+      label: '預測值', data: ordered.map(row => row.predicted),
+      borderColor: color('--accent'), backgroundColor: color('--accent'),
+      borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, fill: false, tension: 0.08,
+    },
+    {
+      label: '實際值（PI 內）', data: ordered.map(row => row.actual >= row.interval.piLower && row.actual <= row.interval.piUpper ? row.actual : null),
+      showLine: false, borderColor: color('--series-2'), backgroundColor: color('--series-2'),
+      pointRadius: 3, pointHoverRadius: 5,
+    },
+    {
+      label: '實際值（PI 外）', data: ordered.map(row => row.actual < row.interval.piLower || row.actual > row.interval.piUpper ? row.actual : null),
+      showLine: false, borderColor: color('--inner'), backgroundColor: color('--outlier'),
+      pointStyle: 'triangle', pointBorderWidth: 2.5,
+      pointRadius: 6, pointHoverRadius: 8,
+    },
+  ];
+  const inside = ordered.filter(row => row.actual >= row.interval.piLower && row.actual <= row.interval.piUpper).length;
+  const piWidth = intervals.map(row => row.piUpper - row.piLower);
+  const ciWidth = intervals.map(row => row.ciUpper - row.ciLower);
+  $('pi-coverage').textContent = `${(100 * inside / yte.length).toFixed(1)}%`;
+  $('pi-width').textContent = `${fmtNum(mean(piWidth))}`;
+  $('ci-width').textContent = `${fmtNum(mean(ciWidth))}`;
+
+  charts.prediction?.destroy();
+  charts.prediction = new Chart($('prediction-chart'), {
+    type: 'line',
+    data: { labels, datasets: chartData },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: color('--solid'),
+          titleColor: color('--muted'), bodyColor: color('--on-solid'),
+          filter: item => item.datasetIndex >= 4 && item.parsed.y != null,
+          callbacks: {
+            title: items => `預測值排序第 ${items[0].label} 筆`,
+            label: item => `${item.dataset.label}：${fmtNum(item.parsed.y)}`,
+            afterBody: items => {
+              if (!items.length) return '';
+              const row = ordered[items[0].dataIndex].interval;
+              return [`95% CI：[${fmtNum(row.ciLower)}, ${fmtNum(row.ciUpper)}]`, `95% PI：[${fmtNum(row.piLower)}, ${fmtNum(row.piUpper)}]`];
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          title: { display: true, text: '測試樣本（依預測值排序）', color: color('--text-2') },
+          grid: { display: false }, border: { display: false },
+          ticks: { color: color('--text-2'), maxTicksLimit: 12 },
+        },
+        y: {
+          title: { display: true, text: state.result.target, color: color('--text-2') },
+          grid: { color: color('--line') }, border: { display: false },
+          ticks: { color: color('--text-2'), padding: 8 },
+        },
+      },
+    },
+  });
 }
 
 // 測試集殘差（實際 − 預測）依 |殘差| 排序；|殘差| > 2σ̂（訓練集殘差標準誤）標為高殘差
@@ -807,7 +913,10 @@ function toggleTheme() {
 
 function onThemeChange() {
   updateThemeIcon();
-  if (state.result && !$('results').hidden) drawCharts();
+  if (state.result && !$('results').hidden) {
+    drawCharts();
+    renderPredictionChart();
+  }
 }
 
 function updateThemeIcon() {
