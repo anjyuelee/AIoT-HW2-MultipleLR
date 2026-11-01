@@ -32,7 +32,7 @@ $('data-url').value = resolveDataUrl(CONFIG.dataUrl);
 $('test-ratio').value = Math.round(CONFIG.testRatio * 100);
 $('seed').value = CONFIG.seed;
 fillPresetSelect();
-fillChoices('method', [...METHODS.map(m => [m.key, m.name]), ['all', '比較全部方法']], 'forward');
+fillChoices('method', [...METHODS.map(m => [m.key, m.name]), ['all', '比較全部方法']], 'all');
 
 $('load-form').addEventListener('submit', e => {
   e.preventDefault();
@@ -148,9 +148,9 @@ async function analyze() {
       runs[m] = { steps };
     }
     const cvGroups = data.groups ? pick(data.groups, split.train) : null;
-    const complete = await attachCrossValidatedMetrics(runs, methods, Xtr, ytr, cvGroups, seed, () => runId === state.analysisRunId);
-    if (!complete || runId !== state.analysisRunId) return;
-    state.result = { data, target, split, Xtr, ytr, Xte, yte, cols, methods, runs };
+    const selection = await attachCrossValidatedMetrics(runs, methods, Xtr, ytr, cvGroups, seed, () => runId === state.analysisRunId);
+    if (!selection || runId !== state.analysisRunId) return;
+    state.result = { data, target, split, Xtr, ytr, Xte, yte, cols, methods, runs, globalBest: selection };
     state.inputs = {};
     syncMethodOptions();
     state.analysisBusy = false;
@@ -173,8 +173,7 @@ async function attachCrossValidatedMetrics(runs, methods, X, y, groups, seed, is
   const folds = makeFolds(y.length, foldCount, seed, groups);
   for (const method of methods) {
     const steps = runs[method].steps;
-    const sums = new Array(steps.length).fill(0);
-    const counts = new Array(steps.length).fill(0);
+    const foldScores = Array.from({ length: steps.length }, () => []);
     for (const fold of folds) {
       const XfoldTrain = fold.train.map(i => X[i]), yfoldTrain = fold.train.map(i => y[i]);
       const XfoldValidation = fold.validation.map(i => X[i]), yfoldValidation = fold.validation.map(i => y[i]);
@@ -183,24 +182,55 @@ async function attachCrossValidatedMetrics(runs, methods, X, y, groups, seed, is
       const subsets = SELECTORS[method](XfoldTrain, yfoldTrain, foldCols);
       for (const subset of subsets) {
         const kIndex = subset.length - 1;
-        if (kIndex < 0 || kIndex >= sums.length) continue;
+        if (kIndex < 0 || kIndex >= steps.length) continue;
         const fit = lstsq(design(XfoldTrain, subset), yfoldTrain);
         if (!fit) continue;
         const validationPredictions = predict(XfoldValidation, subset, fit.coef);
-        sums[kIndex] += rmse(yfoldValidation, validationPredictions);
-        counts[kIndex]++;
+        foldScores[kIndex].push(rmse(yfoldValidation, validationPredictions));
       }
       await new Promise(resolve => setTimeout(resolve, 0));
       if (!isCurrent()) return false;
     }
     for (let i = 0; i < steps.length; i++) {
-      steps[i].cvRmse = counts[i] === foldCount ? sums[i] / foldCount : null;
+      const scores = foldScores[i];
+      steps[i].cvRmse = scores.length === foldCount ? mean(scores) : null;
+      const sampleSd = scores.length > 1
+        ? Math.sqrt(scores.reduce((sum, score) => sum + (score - steps[i].cvRmse) ** 2, 0) / (scores.length - 1))
+        : NaN;
+      steps[i].cvSe = scores.length === foldCount ? sampleSd / Math.sqrt(foldCount) : null;
     }
     const eligible = steps.filter(step => Number.isFinite(step.cvRmse));
     if (!eligible.length) throw new Error(`${methodName(method)} 無法在所有 5 個 fold 中完成交叉驗證。`);
-    runs[method].best = eligible.reduce((best, step) => step.cvRmse < best.cvRmse ? step : best);
+    const cvMinimum = eligible.reduce((best, step) => step.cvRmse < best.cvRmse ? step : best);
+    const threshold = cvMinimum.cvRmse + cvMinimum.cvSe;
+    const oneSeEligible = eligible.filter(step => step.cvRmse <= threshold);
+    runs[method].cvMinimum = cvMinimum;
+    runs[method].cvThreshold = threshold;
+    runs[method].best = oneSeEligible.reduce((best, step) =>
+      step.k < best.k || (step.k === best.k && step.cvRmse < best.cvRmse) ? step : best);
   }
-  return true;
+  const all = methods.flatMap(method => runs[method].steps
+    .filter(step => Number.isFinite(step.cvRmse))
+    .map(step => ({ method, step })));
+  const globalMinimum = all.reduce((best, item) => item.step.cvRmse < best.step.cvRmse ? item : best);
+  const globalThreshold = globalMinimum.step.cvRmse + globalMinimum.step.cvSe;
+  const globalEligible = all.filter(item => item.step.cvRmse <= globalThreshold);
+  const globalBest = globalEligible.reduce((best, item) =>
+    item.step.k < best.step.k
+      || (item.step.k === best.step.k && item.step.cvRmse < best.step.cvRmse)
+      ? item
+      : best);
+  return {
+    method: globalBest.method,
+    k: globalBest.step.k,
+    cvRmse: globalBest.step.cvRmse,
+    cvSe: globalBest.step.cvSe,
+    cvThreshold: globalThreshold,
+    globalMinimumMethod: globalMinimum.method,
+    globalMinimumK: globalMinimum.step.k,
+    globalMinimumCvRmse: globalMinimum.step.cvRmse,
+    globalMinimumSe: globalMinimum.step.cvSe,
+  };
 }
 
 // 特徵太多時 Exhaustive 停用；原本選它就改回 Forward SFS
@@ -238,12 +268,11 @@ const sameRmse = (a, b) => Math.abs(a - b) <= 1e-9 * Math.abs(b);
 
 // 目前模式的最佳模型：以平均 5-fold CV RMSE 選 k 與方法；測試集只留作最終評估。
 function modeBest() {
-  let best = null;
-  for (const m of modeMethods()) {
-    const b = state.result.runs[m].best;
-    if (!best || (b.cvRmse < best.cvRmse && !sameRmse(b.cvRmse, best.cvRmse))) best = { method: m, k: b.k, cvRmse: b.cvRmse };
-  }
-  return best;
+  if (isCompare()) return state.result.globalBest;
+  const method = choice('method');
+  const run = state.result.runs[method];
+  const best = run.best;
+  return { method, k: best.k, cvRmse: best.cvRmse, cvSe: best.cvSe, cvThreshold: run.cvThreshold };
 }
 
 function select(method, k) {
@@ -355,7 +384,7 @@ function renderModel() {
   const label = `${methodName(s.method)}，k = ${s.k}`;
 
   $('model-title').textContent = isBest ? `最佳模型：${label}` : `${label} 的模型`;
-  $('hero-sub').textContent = `CV RMSE ${fmtMaybe(s.cvRmse)} · 最終 Test RMSE ${fmtNum(s.rmse)} · 使用 ${s.k} / ${data.names.length} 個特徵`;
+  $('hero-sub').textContent = `1-SE 選擇：CV RMSE ${fmtMaybe(s.cvRmse)} ± SE ${fmtMaybe(s.cvSe)}（門檻 ${fmtMaybe(best.cvThreshold)}） · Test RMSE ${fmtNum(s.rmse)} · 使用 ${s.k} / ${data.names.length} 個特徵`;
   $('back-to-best').hidden = isBest;
   $('back-to-best').textContent = `回到最佳：${methodName(best.method)}，k = ${best.k}`;
 
@@ -394,7 +423,7 @@ function renderModel() {
 function renderTable() {
   const compare = isCompare();
   $('table-title').textContent = compare ? '各方法比較' : '每個 k 選到的特徵';
-  if (compare) $('table-hint').textContent = '每格依序為 CV RMSE、Test RMSE、Test R²；最佳標記依 CV RMSE 選擇';
+  if (compare) $('table-hint').textContent = '每格依序為 CV RMSE、Test RMSE、Test R²；方法最佳 k 各自依 1-SE，整體最佳標記依全域 1-SE';
   else {
     $('table-hint').replaceChildren(
       el('span', 'key', el('i', 'in'), '已選入'),
@@ -474,7 +503,7 @@ function renderCompareTable() {
       const btn = el('button', 'cell-btn',
         el('b', '', fmtMaybe(s.cvRmse)),
         el('span', '', `Test ${fmtNum(s.rmse)} · R² ${s.r2.toFixed(4)}`));
-      const isBest = Number.isFinite(s.cvRmse) && sameRmse(s.cvRmse, best.cvRmse);
+      const isBest = m === best.method && s.k === best.k;
       if (isBest) btn.append(el('span', 'best-tag', '最佳'));
       btn.type = 'button';
       btn.setAttribute('aria-label', `${methodName(m)}，k = ${k}：CV RMSE ${fmtMaybe(s.cvRmse)}，Test RMSE ${fmtNum(s.rmse)}，R² ${s.r2.toFixed(4)}${isBest ? '，CV 最佳' : ''}`);
@@ -924,10 +953,8 @@ function drawCharts() {
   const labels = Array.from({ length: maxK }, (_, i) => i + 1);
   const best = modeBest();
   const bestSeries = series.indexOf(best.method), bestIdx = best.k - 1;
-  const ties = series.filter(m => sameRmse(runs[m].best.cvRmse, best.cvRmse)).length;
-  const bestText = !compare ? `CV 最佳 k = ${best.k}`
-    : ties > 1 ? `CV 最佳 k = ${best.k}（${ties} 個方法相同）`
-    : `CV 最佳：${methodName(best.method)} k = ${best.k}`;
+  const bestText = !compare ? `1-SE k = ${best.k}`
+    : `全域 1-SE：${methodName(best.method)} k = ${best.k}`;
   renderLegend(series);
 
   for (const [key, { label, fmt, below }] of Object.entries(METRICS)) {
@@ -962,6 +989,7 @@ function drawCharts() {
         metric: 'cvRmse',
         label: compare ? `${methodName(m)} · 5-fold CV RMSE` : '5-fold CV RMSE（用於選模）',
         data: labels.map(k => stepOf(m, k)?.cvRmse ?? null),
+        cvSe: labels.map(k => stepOf(m, k)?.cvSe ?? null),
         hidden: compare && state.hidden.has(m),
         borderColor: c,
         backgroundColor: c,
@@ -979,6 +1007,7 @@ function drawCharts() {
     }) : [];
     const datasets = [...testDatasets, ...cvDatasets];
     const markerSeries = key === 'rmse' ? series.length + bestSeries : bestSeries;
+    const oneSeThreshold = compare ? state.result.globalBest.cvThreshold : runs[series[0]].cvThreshold;
     charts[key] = new Chart($(`${key}-chart`), {
       type: 'line',
       data: { labels, datasets },
@@ -1037,7 +1066,7 @@ function drawCharts() {
         crosshair: color('--line-2'),
         pill: color('--solid'),
         pillText: color('--on-solid'),
-      })],
+      }), ...(key === 'rmse' ? [cvErrorBarsPlugin, oneSeThresholdPlugin(oneSeThreshold, color('--accent-ink'), color('--solid'), color('--on-solid'))] : [])],
     });
   }
 }
@@ -1090,6 +1119,61 @@ function markers(bestSeries, bestIdx, text, below, colors) {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(text, x + w / 2, y + h / 2 + 0.5);
+      ctx.restore();
+    },
+  };
+}
+
+const cvErrorBarsPlugin = {
+  id: 'cvErrorBars',
+  beforeDatasetsDraw(chart) {
+    const { ctx, scales: { y }, data } = chart;
+    ctx.save();
+    data.datasets.forEach((dataset, datasetIndex) => {
+      if (dataset.metric !== 'cvRmse' || !chart.isDatasetVisible(datasetIndex)) return;
+      const meta = chart.getDatasetMeta(datasetIndex);
+      ctx.strokeStyle = dataset.borderColor;
+      ctx.lineWidth = 1;
+      for (let i = 0; i < dataset.data.length; i++) {
+        const value = dataset.data[i], se = dataset.cvSe?.[i], point = meta.data[i];
+        if (!point || !Number.isFinite(value) || !Number.isFinite(se)) continue;
+        const yHigh = y.getPixelForValue(value + se), yLow = y.getPixelForValue(value - se);
+        const x = point.x, cap = 3;
+        ctx.beginPath();
+        ctx.moveTo(x, yHigh); ctx.lineTo(x, yLow);
+        ctx.moveTo(x - cap, yHigh); ctx.lineTo(x + cap, yHigh);
+        ctx.moveTo(x - cap, yLow); ctx.lineTo(x + cap, yLow);
+        ctx.stroke();
+      }
+    });
+    ctx.restore();
+  },
+};
+
+function oneSeThresholdPlugin(threshold, stroke, pill, pillText) {
+  return {
+    id: 'oneSeThreshold',
+    beforeDatasetsDraw(chart) {
+      if (!Number.isFinite(threshold)) return;
+      const { ctx, chartArea, scales: { y } } = chart;
+      const py = y.getPixelForValue(threshold);
+      if (py < chartArea.top || py > chartArea.bottom) return;
+      ctx.save();
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(chartArea.left, py); ctx.lineTo(chartArea.right, py); ctx.stroke();
+      ctx.setLineDash([]);
+      const text = `1-SE 門檻 ${fmtNum(threshold)}`;
+      ctx.font = `600 10px ${Chart.defaults.font.family}`;
+      const width = ctx.measureText(text).width + 12;
+      const x = Math.max(chartArea.left, chartArea.right - width - 4);
+      const top = Math.max(chartArea.top, py - 19);
+      ctx.fillStyle = pill;
+      ctx.beginPath(); ctx.roundRect(x, top, width, 16, 8); ctx.fill();
+      ctx.fillStyle = pillText;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(text, x + width / 2, top + 8);
       ctx.restore();
     },
   };

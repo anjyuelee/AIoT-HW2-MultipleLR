@@ -139,8 +139,8 @@
       <section class="card a-chart" aria-label="Test RMSE 與 Test R² 隨特徵數 k 的變化">
         <div id="legend" class="chips" role="group" aria-label="顯示的方法" hidden></div>
         <div class="inner chart-inner">
-          <div class="chart-head"><h2>RMSE vs k</h2><span class="label">CV RMSE 用於選模；Test RMSE 僅供參考，不用於選模</span></div>
-          <div class="rmse-legend" aria-label="RMSE 圖例"><span><i class="test-line"></i>Test RMSE（參考）</span><span><i class="cv-line"></i>5-fold CV RMSE（選模）</span></div>
+          <div class="chart-head"><h2>RMSE vs k</h2><span class="label">1-SE：在最低 CV RMSE + SE 內選較小 k</span></div>
+          <div class="rmse-legend" aria-label="RMSE 圖例"><span><i class="test-line"></i>Test RMSE（僅參考）</span><span><i class="cv-line"></i>5-fold CV RMSE ± 1 SE</span><span><i class="threshold-line"></i>1-SE 門檻</span></div>
           <div class="chart-box"><canvas id="rmse-chart" role="img" aria-label="Test RMSE 隨特徵數 k 變化的折線圖，數值見特徵表格"></canvas></div>
         </div>
         <div class="inner chart-inner">

@@ -517,6 +517,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.25; }
 .rmse-legend i { width: 20px; border-top: 2px solid var(--accent); }
 .rmse-legend i.cv-line { border-top-style: dashed; border-top-width: 3px; }
 .rmse-legend i.test-line { opacity: 0.55; }
+.rmse-legend i.threshold-line { border-top-color: var(--accent-ink); border-top-style: dotted; }
 .chart-box { position: relative; flex: 1; min-height: 240px; }
 .chart-box canvas { position: absolute; top: 0; left: 0; cursor: pointer; }
 @media (max-width: 640px) { .chart-box { min-height: 220px; } }
